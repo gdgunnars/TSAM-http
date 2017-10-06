@@ -98,6 +98,28 @@ int main()
         message[n] = '\0';
         fprintf(stdout, "Received:\n%s\n", message);
 
+        /* Parse the query starting here */
+        const char *start_of_path = strchr(message, ' ') + 1;
+        const char *start_of_query = strchr(start_of_path, '?');
+        const char *end_of_query = strchr(start_of_query, ' ');
+    
+        /* Get the right amount of memory */
+        char path[start_of_query - start_of_path];
+        char query[end_of_query - start_of_query];
+    
+        /* Copy the strings into our memory */
+        strncpy(path, start_of_path,  start_of_query - start_of_path);
+        strncpy(query, start_of_query, end_of_query - start_of_query);
+    
+        /* Null terminators (because strncpy does not provide them) */
+        path[sizeof(path)] = 0;
+        query[sizeof(query)] = 0;
+    
+        /*Print the query*/
+        printf("%s\n", query, sizeof(query));
+        printf("%s\n", path, sizeof(path));
+        /* End of query parsing */
+    
         // Convert message to upper case.
         for (int i = 0; i < n; ++i) message[i] = toupper(message[i]);
 
