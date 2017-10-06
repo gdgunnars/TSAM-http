@@ -49,6 +49,8 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+    // Get the port number form ocmmand line
+    int port = atoi(argv[1]);
     int sockfd, r;
     struct sockaddr_in server, client;
     char message[512];
@@ -65,7 +67,7 @@ int main(int argc, char **argv)
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = htons(argv[1]);
+    server.sin_port = htons(port);
     r = bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
     if (r == -1) {
         perror("bind");
