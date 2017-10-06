@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <glib.h>
 
 #ifndef PORT
 #define PORT 32000
