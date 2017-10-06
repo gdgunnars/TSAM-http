@@ -1,1 +1,4 @@
 Update this.
+
+Installing Glib on ubuntu 16.04
+    $ sudo apt install libglib2.0-dev
