@@ -41,12 +41,14 @@
 #include <stdlib.h>
 #include <glib.h>
 
-#ifndef PORT
-#define PORT 32000
-#endif
-
-int main()
+int main(int argc, char **argv)
 {
+	// Check if number of arguments are correct
+    if(argc != 2) {
+		fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+		return -1;
+	}
+
     int sockfd, r;
     struct sockaddr_in server, client;
     char message[512];
@@ -63,7 +65,7 @@ int main()
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = htons(PORT);
+    server.sin_port = htons(argv[1]);
     r = bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
     if (r == -1) {
         perror("bind");
@@ -97,28 +99,6 @@ int main()
 
         message[n] = '\0';
         fprintf(stdout, "Received:\n%s\n", message);
-
-        /* Parse the query starting here */
-        const char *start_of_path = strchr(message, ' ') + 1;
-        const char *start_of_query = strchr(start_of_path, '?');
-        const char *end_of_query = strchr(start_of_query, ' ');
-    
-        /* Get the right amount of memory */
-        char path[start_of_query - start_of_path];
-        char query[end_of_query - start_of_query];
-    
-        /* Copy the strings into our memory */
-        strncpy(path, start_of_path,  start_of_query - start_of_path);
-        strncpy(query, start_of_query, end_of_query - start_of_query);
-    
-        /* Null terminators (because strncpy does not provide them) */
-        path[sizeof(path)] = 0;
-        query[sizeof(query)] = 0;
-    
-        /*Print the query*/
-        printf("%s\n", query, sizeof(query));
-        printf("%s\n", path, sizeof(path));
-        /* End of query parsing */
     
         // Convert message to upper case.
         for (int i = 0; i < n; ++i) message[i] = toupper(message[i]);
