@@ -37,6 +37,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <glib.h>
@@ -89,6 +90,42 @@ typedef struct Request {
 } Request;
 
 
+bool fill_request(GString *message, Request *request)
+{
+    if (g_str_has_prefix(message->str, "GET")) {
+        request->method = GET;
+    }
+    else if (g_str_has_prefix(message->str, "HEAD")) {
+        request->method = HEAD;
+    }
+    else if (g_str_has_prefix(message->str, "POST")) {
+        request->method = POST;
+    }
+    else if (g_str_has_prefix(message->str, "PUT")) {
+        request->method = PUT;
+    }
+    else if (g_str_has_prefix(message->str, "DELETE")) {
+        request->method = DELETE;
+    }
+    else if (g_str_has_prefix(message->str, "CONNECT")) {
+        request->method = CONNECT;
+    }
+    else if (g_str_has_prefix(message->str, "OPTIONS")) {
+        request->method = OPTIONS;
+    }
+    else if (g_str_has_prefix(message->str, "TRACE")) {
+        request->method = TRACE;
+    }
+    else {
+        // TODO: Unknown prefix, should probably return immediatly with some perror!
+    }
+    
+    // TODO: Parse rest of query into the proper variablez
+
+    return true;
+}
+
+
 int main(int argc, char **argv)
 {
 	// Check if number of arguments are correct
@@ -109,7 +146,8 @@ int main(int argc, char **argv)
 	
     int r;
     struct sockaddr_in server, client;
-    char message[512];
+    char charmsg[1024];
+    GString *message = g_string_sized_new(1024);
 
     // Create and bind a TCP socket.
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -151,20 +189,25 @@ int main(int argc, char **argv)
         }
 
         // Receive from connfd, not sockfd.
-        ssize_t n = recv(connfd, message, sizeof(message) - 1, 0);
+        ssize_t n = recv(connfd, charmsg, sizeof(charmsg) - 1, 0);
         if (n == -1) {
             perror("recv");
             exit(EXIT_FAILURE);
         }
 
-        message[n] = '\0';
-        fprintf(stdout, "Received:\n%s\n", message);
-    
-        // Convert message to upper case.
-        for (int i = 0; i < n; ++i) message[i] = toupper(message[i]);
+        // Empty message, then copy the char buffer into msg.
+        g_string_truncate (message, 0); 
+        // TODO: This was a shitmix because i had a hard time reading directly into gstring using recv, we can refactor!
+        message = g_string_new(charmsg);
+        // Create a Request and fill into the various fields, using the message received
+        Request request;
+        fill_request(message, &request);
+
+        // Print the complete message on screen.
+        printf("%s\n", message->str);
 
         // Send the message back.
-        r = send(connfd, message, (size_t) n, 0);
+        r = send(connfd, message->str, (size_t) n, 0);
         if (r == -1) {
             perror("send");
             exit(EXIT_FAILURE);
@@ -176,6 +219,7 @@ int main(int argc, char **argv)
             perror("shutdown");
             exit(EXIT_FAILURE);
         }
+        
         r  = close(connfd);
         if (r == -1) {
             perror("close");
