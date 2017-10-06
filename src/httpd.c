@@ -41,17 +41,73 @@
 #include <stdlib.h>
 #include <glib.h>
 
+/* ----- GLOBAL VARIABLES ----- */
+FILE *logfile = NULL;
+int sockfd;
+
+/* ----- TYPEDEFS ----- */
+typedef enum Method {
+	GET,
+	HEAD,
+	POST,
+	PUT,
+	DELETE,
+	CONNECT,
+	OPTIONS,
+	TRACE
+} Method;
+
+const char* methods[] = {
+	"GET",
+	"HEAD",
+	"POST",
+	"PUT",
+	"DELETE",
+	"CONNECT",
+	"OPTIONS",
+	"TRACE"
+};
+
+
+typedef struct Request {
+	Method method;
+	GString *path;
+	GString *query;
+	GString *user_agent;
+	GString *host;
+	GString *content_type;
+	GString *content_length;
+	GString *accept_language;
+	GString *accept_encoding;
+	GString *connection;
+	GString *msg_body;
+	// TODO: maybe we need this?
+	/*
+	bool connection_close;
+	GHashTable* headers;
+	*/
+} Request;
+
+
 int main(int argc, char **argv)
 {
 	// Check if number of arguments are correct
     if(argc != 2) {
 		fprintf(stderr, "Usage: %s <port>\n", argv[0]);
-		return -1;
+		exit(EXIT_FAILURE);
 	}
 
-    // Get the port number form ocmmand line
-    int port = atoi(argv[1]);
-    int sockfd, r;
+	// Get the port number form command line
+	int port = atoi(argv[1]);
+
+	// Open the log file
+	logfile = fopen("httpd.log","a");
+	if (logfile == NULL) {
+		perror("Failed to open/create log file");
+		exit(EXIT_FAILURE);
+	}
+	
+    int r;
     struct sockaddr_in server, client;
     char message[512];
 
@@ -80,9 +136,11 @@ int main(int argc, char **argv)
     if (r == -1) {
         perror("listen");
         exit(EXIT_FAILURE);
-    }
+	}
+	fprintf(stdout, "Listening on port %d...\n", port);
+	
 
-    for (;;) {
+    while (1337) {
         // We first have to accept a TCP connection, connfd is a fresh
         // handle dedicated to this connection.
         socklen_t len = (socklen_t) sizeof(client);
