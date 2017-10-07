@@ -241,7 +241,6 @@ bool fill_request(GString *message, Request *request)
     request->http_version = g_string_new(header_1[2]);
     g_strfreev(header_1);
     
-    
     // Split the header into separate lines and parse each line one at a time.
     
     gchar **lines = g_strsplit(first_line_and_the_rest[1], "\n", -1);
@@ -251,23 +250,9 @@ bool fill_request(GString *message, Request *request)
         parse_header(lines[i], request);
     }
 
-    /*
-    // get host
-    gchar **split_host_from_message = g_strsplit(first_line_and_the_rest[1], "\n", 2);
-    g_strfreev(first_line_and_the_rest);
-    gchar **host_split = g_strsplit(split_host_from_message[0], ": ", 2);
-    request->host = g_string_new(host_split[1]);
-    g_strfreev(host_split);
 
-    gchar **user_agent_from_message = g_strsplit(split_host_from_message[1], "\n", 2);
-    g_strfreev(split_host_from_message);
-    gchar **user_agent_split = g_strsplit(user_agent_from_message[0], ": ", 2);
-    request->user_agent = g_string_new(user_agent_split[1]);
-    g_strfreev(user_agent_split);
-
-    */
-    printf ("Path: %s\n", request->path->str);
-    printf ("query: %s\n", request->query->str);
+    printf("Path: %s\n", request->path->str);
+    printf("query: %s\n", request->query->str);
     printf("version: %s\n", request->http_version->str);
     printf("Host: %s\n", request->host->str);
     printf("User Agent: %s\n", request->user_agent->str);
