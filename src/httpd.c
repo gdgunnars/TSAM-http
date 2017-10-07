@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <glib.h>
+#include <regex.h>
 
 /* ----- GLOBAL VARIABLES ----- */
 FILE *logfile = NULL;
@@ -78,7 +79,8 @@ typedef struct Request {
     GString *host;
 	GString *user_agent;
 	GString *content_type;
-	GString *content_length;
+    GString *content_length;
+    GString *accept;
 	GString *accept_language;
 	GString *accept_encoding;
 	GString *connection;
@@ -89,6 +91,92 @@ typedef struct Request {
 	GHashTable* headers;
 	*/
 } Request;
+/*
+typedef enum {
+    GET,
+    POST,
+    HEAD,
+    PATH,
+    QUERY,
+    VERSION,
+    HOST,
+    USER_AGENT,
+    CONTENT_TYPE,
+    CONTENT_LENGTH,
+    ACCEPT_LANGUAGE,
+    ACCEPT_ENCODING,
+    CONNECTION,
+    BODY
+} TokenCode;
+
+typedef struct {
+    GString lexeme;
+    TokenCode t_code;
+} Token;
+
+Token next_token(gchar *string) {
+    Token token;
+    gchar **token = g_strsplit(string, ": ", 2);
+
+    if(g_ascii_strcasecmp(token[0], g_string_new("Host")) == 0) {
+
+    }
+
+}
+*/
+
+bool l33t_strcmp(char* s1, char* s2, size_t n) {
+    printf("%s %s\n", s1, s2);
+    for(size_t i = 0; i < n; i++) {
+        
+        if(tolower(s1[i]) != tolower(s2[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void parse_header(gchar *line, Request *request) {
+    // Split line into token and info
+    gchar **split = g_strsplit(line, ":", 2);
+    gchar *token = g_strstrip(split[0]);
+    gchar *info = g_strstrip(split[1]);
+
+    printf("Token: %s\n", token);
+    printf("Info: %s\n", info);
+
+    if (g_ascii_strcasecmp(token, "host") == 0) {
+        request->host = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "user-agent") == 0) {
+        request->user_agent = g_string_new(info);
+        printf("--> %s\n", info);
+    }
+    else if (g_ascii_strcasecmp(token, "Content-Type") == 0) {
+        request->content_type = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "Content-Length") == 0) {
+        request->user_agent = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "Accept") == 0) {
+        request->accept = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "Accept-Language") == 0) {
+        request->accept_language = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "Accept-Encoding") == 0) {
+        request->accept_encoding = g_string_new(info);
+    }
+    else if (g_ascii_strcasecmp(token, "Connection") == 0) {
+        request->connection = g_string_new(info);
+    }
+    else {
+        printf("%s\n", "parse error");
+        // TODO: parse error!
+    }
+
+    g_strfreev(split);
+}
 
 bool str_contains_query(const char* strv) {
     for(size_t i = 0; i < sizeof(strv); i++) {
@@ -123,35 +211,15 @@ bool fill_request(GString *message, Request *request)
     else if (g_str_has_prefix(message->str, "POST")) {
         request->method = g_string_new("POST");
     }
-    else if (g_str_has_prefix(message->str, "PUT")) {
-        request->method = g_string_new("PUT");
-        // TODO: return error that this server does not implement PUT
-    }
-    else if (g_str_has_prefix(message->str, "DELETE")) {
-        request->method = g_string_new("DELETE");
-        // TODO: return error that this server does not implement DELETE
-    }
-    else if (g_str_has_prefix(message->str, "CONNECT")) {
-        request->method = g_string_new("CONNECT");
-        // TODO: return error that this server does not implement CONNECT
-    }
-    else if (g_str_has_prefix(message->str, "OPTIONS")) {
-        request->method = g_string_new("OPTIONS");
-        // TODO: return error that this server does not implement OPTIONS
-    }
-    else if (g_str_has_prefix(message->str, "TRACE")) {
-        request->method = g_string_new("TRACE");
-        // TODO: return error that this server does not implement TRACE
-    }
     else {
         // TODO: Unknown prefix, should probably return immediatly with some perror!
     }
     
     
-    gchar **split_message = g_strsplit(header_and_body[0], "\n", 2);
+    gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\n", 2);
     // Split the message on a newline to simplify extracting headers
     // header_1[0] = method, [1] = path,  [2] = version
-    gchar **header_1 = g_strsplit(split_message[0], " ", 3);
+    gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
     fprintf(stdout, "Method: %s\n", header_1[0]);
     
     //check if we have a query in our path. 
@@ -173,8 +241,20 @@ bool fill_request(GString *message, Request *request)
     request->http_version = g_string_new(header_1[2]);
     g_strfreev(header_1);
     
-    gchar **split_host_from_message = g_strsplit(split_message[1], "\n", 2);
-    g_strfreev(split_message);
+    
+    // Split the header into separate lines and parse each line one at a time.
+    
+    gchar **lines = g_strsplit(first_line_and_the_rest[1], "\n", -1);
+
+    for (guint i = 0; i < g_strv_length(lines); i++) {
+        // do stuff
+        parse_header(lines[i], request);
+    }
+
+    /*
+    // get host
+    gchar **split_host_from_message = g_strsplit(first_line_and_the_rest[1], "\n", 2);
+    g_strfreev(first_line_and_the_rest);
     gchar **host_split = g_strsplit(split_host_from_message[0], ": ", 2);
     request->host = g_string_new(host_split[1]);
     g_strfreev(host_split);
@@ -185,13 +265,13 @@ bool fill_request(GString *message, Request *request)
     request->user_agent = g_string_new(user_agent_split[1]);
     g_strfreev(user_agent_split);
 
-
+    */
     printf ("Path: %s\n", request->path->str);
     printf ("query: %s\n", request->query->str);
     printf("version: %s\n", request->http_version->str);
     printf("Host: %s\n", request->host->str);
     printf("User Agent: %s\n", request->user_agent->str);
-
+    
     //
     
     // TODO: Parse rest of query into the proper variablez
