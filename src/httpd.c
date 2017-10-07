@@ -110,7 +110,7 @@ bool fill_request(GString *message, Request *request)
 
     // Check if body is empty
     if (request->msg_body->len == 0) {
-        fprintf(stdout, "string is empty\n");
+        fprintf(stdout, "<- string is empty ->\n");
     } 
     
     // Check the method of the message
@@ -156,15 +156,17 @@ bool fill_request(GString *message, Request *request)
         printf("----- Mathcing is true ------");
     }*/
     //Will do dirty hax until we find out how to use it.
-    gchar **path_and_query = NULL;
+    
+    //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
-        // Since we have a query, we split the string on ?
-        path_and_query = g_strsplit(header_1[1], "?", 2);
+        // Since we have a query, we split the string on "?".
+        gchar **path_and_query = g_strsplit(header_1[1], "?", 2);
+
         // Set the request values correctly.
         request->path = g_string_new(path_and_query[0]);
         request->query = g_string_new(path_and_query[1]);
 
-        
+        printf ("Path: %s\n", request->path->str);
         printf ("query: %s\n", request->query->str);
 
         //TODO: Do we need to split the fragment from the query ? (fragment => comes after # )
@@ -173,9 +175,6 @@ bool fill_request(GString *message, Request *request)
         printf ("Path: %s\n", request->path->str);
     }
     
-    
-    
-
     fprintf(stdout, "version: %s\n", header_1[2]);
     
     // TODO: Parse rest of query into the proper variablez
