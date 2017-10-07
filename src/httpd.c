@@ -125,18 +125,23 @@ bool fill_request(GString *message, Request *request)
     }
     else if (g_str_has_prefix(message->str, "PUT")) {
         request->method = g_string_new("PUT");
+        // TODO: return error that this server does not implement PUT
     }
     else if (g_str_has_prefix(message->str, "DELETE")) {
         request->method = g_string_new("DELETE");
+        // TODO: return error that this server does not implement DELETE
     }
     else if (g_str_has_prefix(message->str, "CONNECT")) {
         request->method = g_string_new("CONNECT");
+        // TODO: return error that this server does not implement CONNECT
     }
     else if (g_str_has_prefix(message->str, "OPTIONS")) {
         request->method = g_string_new("OPTIONS");
+        // TODO: return error that this server does not implement OPTIONS
     }
     else if (g_str_has_prefix(message->str, "TRACE")) {
         request->method = g_string_new("TRACE");
+        // TODO: return error that this server does not implement TRACE
     }
     else {
         // TODO: Unknown prefix, should probably return immediatly with some perror!
