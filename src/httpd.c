@@ -90,9 +90,17 @@ typedef struct Request {
 	*/
 } Request;
 
+bool str_contains_query(const char* strv) {
+    for(size_t i = 0; i < sizeof(strv); i++) {
+        if (strv[i] == '?') {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
 
 bool fill_request(GString *message, Request *request)
-{
+{   
     // Split message into header and body
     gchar **header_and_body = g_strsplit(message->str, "\r\n\r\n", 2);
     // Immediatly assign body to request
@@ -102,7 +110,7 @@ bool fill_request(GString *message, Request *request)
 
     // Check if body is empty
     if (request->msg_body->len == 0) {
-        fprintf(stdout, "string is empty");
+        fprintf(stdout, "string is empty\n");
     } 
     
     // Check the method of the message
@@ -134,19 +142,46 @@ bool fill_request(GString *message, Request *request)
         // TODO: Unknown prefix, should probably return immediatly with some perror!
     }
     
+     
     
-    gchar **split_message = g_strsplit(message->str, "\n", 2);
+    
+    gchar **split_message = g_strsplit(header_and_body[0], "\n", 2);
     // Split the message on a newline to simplify extracting headers
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(split_message[0], " ", 3);
+    fprintf(stdout, "Method: %s\n", header_1[0]);
+
+    // This is stupid and asks for " const char * const* "
+    /*if (g_strv_contains (header_1[1], "ab")) {
+        printf("----- Mathcing is true ------");
+    }*/
+    //Will do dirty hax until we find out how to use it.
+    gchar **path_and_query = NULL;
+    if(str_contains_query(header_1[1])) {
+        // Since we have a query, we split the string on ?
+        path_and_query = g_strsplit(header_1[1], "?", 2);
+        // Set the request values correctly.
+        request->path = g_string_new(path_and_query[0]);
+        request->query = g_string_new(path_and_query[1]);
+
+        
+        printf ("query: %s\n", request->query->str);
+
+        //TODO: Do we need to split the fragment from the query ? (fragment => comes after # )
+    } else {
+        request->path = g_string_new(header_1[1]);
+        printf ("Path: %s\n", request->path->str);
+    }
+    
+    
     
 
-    fprintf(stdout, "Method: %s\n", header_1[0]);
-    fprintf(stdout, "path: %s\n", header_1[1]);
     fprintf(stdout, "version: %s\n", header_1[2]);
     
     // TODO: Parse rest of query into the proper variablez
 
+    // TODO: We need to remember to use g_strfreev()  to free the memory.
+    g_strfreev(header_and_body) ;
     return true;
 }
 
