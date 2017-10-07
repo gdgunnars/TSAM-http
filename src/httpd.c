@@ -73,7 +73,8 @@ const char* methods[] = {
 typedef struct Request {
 	Method method;
 	GString *path;
-	GString *query;
+    GString *query;
+    GString *http_version;
 	GString *user_agent;
 	GString *host;
 	GString *content_type;
@@ -92,6 +93,19 @@ typedef struct Request {
 
 bool fill_request(GString *message, Request *request)
 {
+    // Split message into header and body
+    gchar **header_and_body = g_strsplit(message->str, "\r\n\r\n", 2);
+    // Immediatly assign body to request
+    request->msg_body = g_string_new(header_and_body[1]);
+
+    fprintf(stdout, "Msg body: %s\n", request->msg_body->str);
+
+    // Check if body is empty
+    if (request->msg_body->len == 0) {
+        fprintf(stdout, "string is empty");
+    } 
+    
+    // Check the method of the message
     if (g_str_has_prefix(message->str, "GET")) {
         request->method = GET;
     }
@@ -120,11 +134,21 @@ bool fill_request(GString *message, Request *request)
         // TODO: Unknown prefix, should probably return immediatly with some perror!
     }
     
+    
+    gchar **split_message = g_strsplit(message->str, "\n", 2);
+    // Split the message on a newline to simplify extracting headers
+    // header_1[0] = method, [1] = path,  [2] = version
+    gchar **header_1 = g_strsplit(split_message[0], " ", 3);
+    
+
+    fprintf(stdout, "Method: %s\n", header_1[0]);
+    fprintf(stdout, "path: %s\n", header_1[1]);
+    fprintf(stdout, "version: %s\n", header_1[2]);
+    
     // TODO: Parse rest of query into the proper variablez
 
     return true;
 }
-
 
 int main(int argc, char **argv)
 {
@@ -202,7 +226,7 @@ int main(int argc, char **argv)
         fill_request(message, &request);
 
         // Print the complete message on screen.
-        printf("%s\n", message->str);
+        //printf("%s\n", message->str);
 
         // Send the message back.
         r = send(connfd, message->str, (size_t) n, 0);
