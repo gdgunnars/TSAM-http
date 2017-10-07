@@ -47,7 +47,7 @@ FILE *logfile = NULL;
 int sockfd;
 
 /* ----- TYPEDEFS ----- */
-typedef enum Method {
+/*typedef enum {
 	GET,
 	HEAD,
 	POST,
@@ -56,7 +56,7 @@ typedef enum Method {
 	CONNECT,
 	OPTIONS,
 	TRACE
-} Method;
+} Method;*/
 
 const char* methods[] = {
 	"GET",
@@ -71,12 +71,12 @@ const char* methods[] = {
 
 
 typedef struct Request {
-	Method method;
+	GString *method;
 	GString *path;
     GString *query;
     GString *http_version;
+    GString *host;
 	GString *user_agent;
-	GString *host;
 	GString *content_type;
 	GString *content_length;
 	GString *accept_language;
@@ -115,34 +115,32 @@ bool fill_request(GString *message, Request *request)
     
     // Check the method of the message
     if (g_str_has_prefix(message->str, "GET")) {
-        request->method = GET;
+        request->method = g_string_new("GET");
     }
     else if (g_str_has_prefix(message->str, "HEAD")) {
-        request->method = HEAD;
+        request->method = g_string_new("HEAD");
     }
     else if (g_str_has_prefix(message->str, "POST")) {
-        request->method = POST;
+        request->method = g_string_new("POST");
     }
     else if (g_str_has_prefix(message->str, "PUT")) {
-        request->method = PUT;
+        request->method = g_string_new("PUT");
     }
     else if (g_str_has_prefix(message->str, "DELETE")) {
-        request->method = DELETE;
+        request->method = g_string_new("DELETE");
     }
     else if (g_str_has_prefix(message->str, "CONNECT")) {
-        request->method = CONNECT;
+        request->method = g_string_new("CONNECT");
     }
     else if (g_str_has_prefix(message->str, "OPTIONS")) {
-        request->method = OPTIONS;
+        request->method = g_string_new("OPTIONS");
     }
     else if (g_str_has_prefix(message->str, "TRACE")) {
-        request->method = TRACE;
+        request->method = g_string_new("TRACE");
     }
     else {
         // TODO: Unknown prefix, should probably return immediatly with some perror!
     }
-    
-     
     
     
     gchar **split_message = g_strsplit(header_and_body[0], "\n", 2);
@@ -150,12 +148,6 @@ bool fill_request(GString *message, Request *request)
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(split_message[0], " ", 3);
     fprintf(stdout, "Method: %s\n", header_1[0]);
-
-    // This is stupid and asks for " const char * const* "
-    /*if (g_strv_contains (header_1[1], "ab")) {
-        printf("----- Mathcing is true ------");
-    }*/
-    //Will do dirty hax until we find out how to use it.
     
     //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
@@ -166,16 +158,36 @@ bool fill_request(GString *message, Request *request)
         request->path = g_string_new(path_and_query[0]);
         request->query = g_string_new(path_and_query[1]);
 
-        printf ("Path: %s\n", request->path->str);
-        printf ("query: %s\n", request->query->str);
-
         //TODO: Do we need to split the fragment from the query ? (fragment => comes after # )
     } else {
         request->path = g_string_new(header_1[1]);
-        printf ("Path: %s\n", request->path->str);
+        request->query = g_string_new("");
     }
     
-    fprintf(stdout, "version: %s\n", header_1[2]);
+    // Assign the http version.
+    request->http_version = g_string_new(header_1[2]);
+    g_strfreev(header_1);
+    
+    gchar **split_host_from_message = g_strsplit(split_message[1], "\n", 2);
+    g_strfreev(split_message);
+    gchar **host_split = g_strsplit(split_host_from_message[0], ": ", 2);
+    request->host = g_string_new(host_split[1]);
+    g_strfreev(host_split);
+
+    gchar **user_agent_from_message = g_strsplit(split_host_from_message[1], "\n", 2);
+    g_strfreev(split_host_from_message);
+    gchar **user_agent_split = g_strsplit(user_agent_from_message[0], ": ", 2);
+    request->user_agent = g_string_new(user_agent_split[1]);
+    g_strfreev(user_agent_split);
+
+
+    printf ("Path: %s\n", request->path->str);
+    printf ("query: %s\n", request->query->str);
+    printf("version: %s\n", request->http_version->str);
+    printf("Host: %s\n", request->host->str);
+    printf("User Agent: %s\n", request->user_agent->str);
+
+    //
     
     // TODO: Parse rest of query into the proper variablez
 
@@ -260,8 +272,10 @@ int main(int argc, char **argv)
         fill_request(message, &request);
 
         // Print the complete message on screen.
-        //printf("%s\n", message->str);
-
+        printf("----------------------\n");
+        printf("%s\n", message->str);
+        printf("----------------------\n");
+        
         // Send the message back.
         r = send(connfd, message->str, (size_t) n, 0);
         if (r == -1) {
