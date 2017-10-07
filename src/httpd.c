@@ -187,7 +187,7 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
-        // Empty message, then copy the char buffer into msg.
+        // Empty message.
         g_string_truncate (message, 0); 
 
         // Receive from connfd, not sockfd.
