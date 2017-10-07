@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <glib.h>
 #include <regex.h>
+#include <arpa/inet.h>
 
 /* ----- GLOBAL VARIABLES ----- */
 FILE *logfile = NULL;
@@ -113,28 +114,8 @@ typedef struct {
     GString lexeme;
     TokenCode t_code;
 } Token;
-
-Token next_token(gchar *string) {
-    Token token;
-    gchar **token = g_strsplit(string, ": ", 2);
-
-    if(g_ascii_strcasecmp(token[0], g_string_new("Host")) == 0) {
-
-    }
-
-}
 */
 
-bool l33t_strcmp(char* s1, char* s2, size_t n) {
-    printf("%s %s\n", s1, s2);
-    for(size_t i = 0; i < n; i++) {
-        
-        if(tolower(s1[i]) != tolower(s2[i])) {
-            return false;
-        }
-    }
-    return true;
-}
 
 void parse_header(gchar *line, Request *request) {
     // Split line into token and info
@@ -142,21 +123,17 @@ void parse_header(gchar *line, Request *request) {
     gchar *token = g_strstrip(split[0]);
     gchar *info = g_strstrip(split[1]);
 
-    printf("Token: %s\n", token);
-    printf("Info: %s\n", info);
-
     if (g_ascii_strcasecmp(token, "host") == 0) {
         request->host = g_string_new(info);
     }
     else if (g_ascii_strcasecmp(token, "user-agent") == 0) {
         request->user_agent = g_string_new(info);
-        printf("--> %s\n", info);
     }
     else if (g_ascii_strcasecmp(token, "Content-Type") == 0) {
         request->content_type = g_string_new(info);
     }
     else if (g_ascii_strcasecmp(token, "Content-Length") == 0) {
-        request->user_agent = g_string_new(info);
+        request->content_length = g_string_new(info);
     }
     else if (g_ascii_strcasecmp(token, "Accept") == 0) {
         request->accept = g_string_new(info);
@@ -195,6 +172,7 @@ bool fill_request(GString *message, Request *request)
     request->msg_body = g_string_new(header_and_body[1]);
 
     fprintf(stdout, "Msg body: %s\n", request->msg_body->str);
+    printf("\n");
 
     // Check if body is empty
     if (request->msg_body->len == 0) {
@@ -215,12 +193,11 @@ bool fill_request(GString *message, Request *request)
         // TODO: Unknown prefix, should probably return immediatly with some perror!
     }
     
-    
-    gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\n", 2);
     // Split the message on a newline to simplify extracting headers
+    gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\n", 2);
+    
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
-    fprintf(stdout, "Method: %s\n", header_1[0]);
     
     //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
@@ -239,10 +216,9 @@ bool fill_request(GString *message, Request *request)
     
     // Assign the http version.
     request->http_version = g_string_new(header_1[2]);
-    g_strfreev(header_1);
+    
     
     // Split the header into separate lines and parse each line one at a time.
-    
     gchar **lines = g_strsplit(first_line_and_the_rest[1], "\n", -1);
 
     for (guint i = 0; i < g_strv_length(lines); i++) {
@@ -251,19 +227,66 @@ bool fill_request(GString *message, Request *request)
     }
 
 
+    printf("Method: %s\n", request->method->str);
     printf("Path: %s\n", request->path->str);
     printf("query: %s\n", request->query->str);
     printf("version: %s\n", request->http_version->str);
     printf("Host: %s\n", request->host->str);
     printf("User Agent: %s\n", request->user_agent->str);
+    printf("Content length: %s\n", request->content_length->str);
+    printf("Content type: %s\n", request->content_type->str);
     
     //
     
     // TODO: Parse rest of query into the proper variablez
 
-    // TODO: We need to remember to use g_strfreev()  to free the memory.
-    g_strfreev(header_and_body) ;
+    // TODO: We need to remember to use g_strfreev()  to free the array's.
+    g_strfreev(header_and_body);
+    g_strfreev(first_line_and_the_rest);
+    g_strfreev(header_1);
+    g_strfreev(lines);
     return true;
+}
+
+void init_request(Request *req) {
+    req->method = g_string_new(NULL);
+    req->path = g_string_new(NULL);
+    req->query = g_string_new(NULL);
+    req->http_version = g_string_new(NULL);
+    req->host = g_string_new(NULL);
+    req->user_agent = g_string_new(NULL);
+    req->content_type = g_string_new(NULL);
+    req->content_length = g_string_new(NULL);
+    req->accept = g_string_new(NULL);
+    req->accept_language = g_string_new(NULL);
+    req->accept_encoding = g_string_new(NULL);
+    req->connection = g_string_new(NULL);
+    req->msg_body = g_string_new(NULL);
+}
+
+void reset_request(Request *req) {
+    g_string_free(req->method, TRUE);
+    g_string_free(req->path, TRUE);
+    g_string_free(req->query, TRUE);
+    g_string_free(req->http_version, TRUE);
+    g_string_free(req->host, TRUE);
+    g_string_free(req->user_agent, TRUE);
+    g_string_free(req->content_type, TRUE);
+    g_string_free(req->content_length, TRUE);
+    g_string_free(req->accept, TRUE);
+    g_string_free(req->accept_language, TRUE);
+    g_string_free(req->accept_encoding, TRUE);
+    g_string_free(req->connection, TRUE);
+    g_string_free(req->msg_body, TRUE);
+}
+
+void write_to_log(Request *request, char *ip, uint16_t port){
+
+    GDateTime *time = g_date_time_new_now_local();
+    gchar *date_time = g_date_time_format(time, "%Y-%m-%dT%H:%M:%SZ");
+    printf("Time: %s\n", date_time);
+    printf("IP addr: %s , Port: %d\n", ip, port);
+    
 }
 
 int main(int argc, char **argv)
@@ -318,6 +341,7 @@ int main(int argc, char **argv)
 	
 
     while (1337) {
+
         // We first have to accept a TCP connection, connfd is a fresh
         // handle dedicated to this connection.
         socklen_t len = (socklen_t) sizeof(client);
@@ -339,13 +363,21 @@ int main(int argc, char **argv)
         
         // Create a Request and fill into the various fields, using the message received
         Request request;
+        init_request(&request);
         fill_request(message, &request);
 
+        /* Just in case we need to double-check the original string
+        //TODO: Remove this before hand in
         // Print the complete message on screen.
         printf("----------------------\n");
         printf("%s\n", message->str);
         printf("----------------------\n");
-        
+        */
+
+        // Adding to log file timestamp, ip, port, requested URL
+        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
+       
+
         // Send the message back.
         r = send(connfd, message->str, (size_t) n, 0);
         if (r == -1) {
@@ -365,5 +397,7 @@ int main(int argc, char **argv)
             perror("close");
             exit(EXIT_FAILURE);
         }
+
+        reset_request(&request);
     }
 }
