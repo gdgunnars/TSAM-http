@@ -284,8 +284,9 @@ void write_to_log(Request *request, char *ip, uint16_t port){
 
     GDateTime *time = g_date_time_new_now_local();
     gchar *date_time = g_date_time_format(time, "%Y-%m-%dT%H:%M:%SZ");
-    printf("Time: %s\n", date_time);
-    printf("IP addr: %s , Port: %d\n", ip, port);
+    fprintf(logfile, "%s : %s:%d %s %s : 200\n", date_time, ip, port, request->method->str, request->path->str);
+    fflush(logfile);
+    g_date_time_unref(time);
     
 }
 
