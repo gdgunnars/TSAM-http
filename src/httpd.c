@@ -146,7 +146,6 @@ int main(int argc, char **argv)
 	
     int r;
     struct sockaddr_in server, client;
-    char charmsg[1024];
     GString *message = g_string_sized_new(1024);
 
     // Create and bind a TCP socket.
@@ -188,17 +187,16 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
+        // Empty message, then copy the char buffer into msg.
+        g_string_truncate (message, 0); 
+
         // Receive from connfd, not sockfd.
-        ssize_t n = recv(connfd, charmsg, sizeof(charmsg) - 1, 0);
+        ssize_t n = recv(connfd, message->str, message->allocated_len - 1, 0);
         if (n == -1) {
             perror("recv");
             exit(EXIT_FAILURE);
         }
-
-        // Empty message, then copy the char buffer into msg.
-        g_string_truncate (message, 0); 
-        // TODO: This was a shitmix because i had a hard time reading directly into gstring using recv, we can refactor!
-        message = g_string_new(charmsg);
+        
         // Create a Request and fill into the various fields, using the message received
         Request request;
         fill_request(message, &request);
