@@ -47,6 +47,7 @@
 /* ----- GLOBAL VARIABLES ----- */
 FILE *logfile = NULL;
 int sockfd;
+const ssize_t BUFFER_SIZE = 1024;
 
 typedef struct Request {
 	GString *method;
@@ -121,7 +122,6 @@ int main(int argc, char **argv)
 	
     int r;
     struct sockaddr_in server, client;
-    GString *message = g_string_sized_new(1024);
 
     // Create and bind a TCP socket.
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -163,15 +163,27 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
-        // Empty message.
-        g_string_truncate (message, 0); 
+        
+        GString *message = g_string_sized_new(BUFFER_SIZE);
+        char buffer[BUFFER_SIZE];
+        g_string_truncate (message, 0); // empty provided GString variable
+        ssize_t n;
 
-        // Receive from connfd, not sockfd.
-        ssize_t n = recv(connfd, message->str, message->allocated_len - 1, 0);
-        if (n == -1) {
-            perror("recv");
-            exit(EXIT_FAILURE);
-        }
+        do {
+            // Receive from connfd, not sockfd.
+            n = recv(connfd, buffer, BUFFER_SIZE, 0);
+            if (n == -1) {
+                perror("recv");
+                exit(EXIT_FAILURE);
+            }
+            if (n == 0) {
+                break;
+            }
+            g_string_append_len(message, buffer, n);
+        } while(n >= BUFFER_SIZE);
+        
+
+        printf("\nMESSAGE:\n%s\n", message->str);
         
         // Create a Request and fill into the various fields, using the message received
         Request request;
@@ -239,6 +251,9 @@ char *get_status_code(char *status_code) {
     else if (strcmp(status_code, "408") == 0) {
         return "408 Request Timeout";
     }
+    else if (strcmp(status_code, "417") == 0) {
+        return "417 Expectation Failed";
+    }
     return "UNKNOWN";
 }
 
@@ -249,7 +264,7 @@ GString *generate_response(Request *request, char *status_code, GString *html) {
 
     char *status = get_status_code(status_code);
     if (strcmp(status, "UNKNOWN") == 0) {
-        // TODO: unknown status code
+        // TODO: unknown status code, server error?
         printf("UNKNOWN STATUS CODE!!!!");
     }
 
@@ -321,6 +336,9 @@ void parse_header(gchar *line, Request *request) {
     else if (g_ascii_strcasecmp(token, "Connection") == 0) {
         request->connection = g_string_new(info);
     }
+    else if (g_ascii_strcasecmp(token, "Expect") == 0) {
+        // TODO: return 417 Expectation Failed
+    }
     else {
         printf("%s\n", "parse error");
         // TODO: parse error!
@@ -343,6 +361,8 @@ bool fill_request(GString *message, Request *request)
     // Split message into header and body
     gchar **header_and_body = g_strsplit(message->str, "\r\n\r\n", 2);
     // Immediatly assign body to request
+
+    g_string_truncate(request->msg_body, 0);
     request->msg_body = g_string_new(header_and_body[1]);
     
     // Split the message on a newline to simplify extracting headers
@@ -391,7 +411,7 @@ bool fill_request(GString *message, Request *request)
         parse_header(lines[i], request);
     }
 
-
+    /*
     printf("Method: %s\n", request->method->str);
     printf("Path: %s\n", request->path->str);
     printf("query: %s\n", request->query->str);
@@ -400,7 +420,8 @@ bool fill_request(GString *message, Request *request)
     printf("User Agent: %s\n", request->user_agent->str);
     printf("Content length: %s\n", request->content_length->str);
     printf("Content type: %s\n", request->content_type->str);
-    
+    */
+
     // TODO: We need to remember to use g_strfreev()  to free the array's.
     g_strfreev(header_and_body);
     g_strfreev(first_line_and_the_rest);
