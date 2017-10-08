@@ -101,7 +101,7 @@ void init_request(Request *req);
 void reset_request(Request *req);
 
 /* Writes to the logfile defined as global variable. */
-void write_to_log(Request *request, char *ip, uint16_t port, char *status_code);
+void write_to_log(Request *request, char *ip, uint16_t port);
 
 int main(int argc, char **argv)
 {
@@ -204,7 +204,7 @@ int main(int argc, char **argv)
         */
 
         // Adding to log file timestamp, ip, port, requested URL
-        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port), "200");
+        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
        
         // Send the message back.
         r = send(connfd, response->str, (size_t) response->len, 0);
@@ -473,10 +473,13 @@ void reset_request(Request *req) {
     g_string_free(req->status_code, TRUE);
 }
 
-void write_to_log(Request *request, char *ip, uint16_t port, char *status_code) {
+void write_to_log(Request *request, char *ip, uint16_t port) {
     GDateTime *time = g_date_time_new_now_local();
     gchar *date_time = g_date_time_format(time, "%Y-%m-%dT%H:%M:%SZ");
-    fprintf(logfile, "%s : %s:%d %s %s : %s\n", date_time, ip, port, request->method->str, request->path->str, status_code);
+    if (request->status_code->len == 0) {
+        request->status_code = g_string_new("200");
+    }
+    fprintf(logfile, "%s : %s:%d %s %s : %s\n", date_time, ip, port, request->method->str, request->path->str, request->status_code->str);
     fflush(logfile);
     g_date_time_unref(time);
     
