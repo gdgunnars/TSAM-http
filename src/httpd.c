@@ -48,7 +48,6 @@
 FILE *logfile = NULL;
 int sockfd;
 
-
 typedef struct Request {
 	GString *method;
 	GString *path;
@@ -69,6 +68,154 @@ typedef struct Request {
 	GHashTable* headers;
 	*/
 } Request;
+
+/* Takes in a status code number ast str. 
+    and gets returned appropriate header status code. */
+char *get_status_code(char *status_code);
+
+/* Generates the response to send back. 
+    Header & body (when needed). */
+GString *generate_response(Request *request, char *status_code, GString *html);
+
+/* Generate the in memory html response */
+GString *generate_html(Request *request, char *ip, uint16_t port);
+
+/* Should be passed one line that contains 1 header field.
+    Header field name is extracted and it's content appended
+    appropriately in the request struct. */
+void parse_header(gchar *line, Request *request);
+
+/* Checks if the passed string includes a ?,
+    if so, the string(path) includes a query. */
+bool str_contains_query(const char* strv);
+
+/* Parse the request header and keep track of needed info in request struct. */
+bool fill_request(GString *message, Request *request);
+
+/* Initializes the request struct with NULL. */
+void init_request(Request *req);
+
+/* free's the strings inside the request struct. */
+void reset_request(Request *req);
+
+/* Writes to the logfile defined as global variable. */
+void write_to_log(Request *request, char *ip, uint16_t port, char *status_code);
+
+int main(int argc, char **argv)
+{
+	// Check if number of arguments are correct
+    if(argc != 2) {
+		fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+		exit(EXIT_FAILURE);
+	}
+
+	// Get the port number form command line
+	int port = atoi(argv[1]);
+
+	// Open the log file
+	logfile = fopen("httpd.log","a");
+	if (logfile == NULL) {
+		perror("Failed to open/create log file");
+		exit(EXIT_FAILURE);
+	}
+	
+    int r;
+    struct sockaddr_in server, client;
+    GString *message = g_string_sized_new(1024);
+
+    // Create and bind a TCP socket.
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Network functions need arguments in network byte order instead of
+    // host byte order. The macros htonl, htons convert the values.
+    memset(&server, 0, sizeof(server));
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+    server.sin_port = htons(port);
+    r = bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
+    if (r == -1) {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    // Before the server can accept messages, it has to listen to the
+    // welcome port. A backlog of one connection is allowed.
+    r = listen(sockfd, 1);
+    if (r == -1) {
+        perror("listen");
+        exit(EXIT_FAILURE);
+	}
+	fprintf(stdout, "Listening on port %d...\n", port);
+	
+
+    while (1337) {
+
+        // We first have to accept a TCP connection, connfd is a fresh
+        // handle dedicated to this connection.
+        socklen_t len = (socklen_t) sizeof(client);
+        int connfd = accept(sockfd, (struct sockaddr *) &client, &len);
+        if (connfd == -1) {
+            perror("accept");
+            exit(EXIT_FAILURE);
+        }
+
+        // Empty message.
+        g_string_truncate (message, 0); 
+
+        // Receive from connfd, not sockfd.
+        ssize_t n = recv(connfd, message->str, message->allocated_len - 1, 0);
+        if (n == -1) {
+            perror("recv");
+            exit(EXIT_FAILURE);
+        }
+        
+        // Create a Request and fill into the various fields, using the message received
+        Request request;
+        init_request(&request);
+        fill_request(message, &request);
+
+        // Generate the response html for GET and POST
+        GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
+        GString *response = generate_response(&request, "200", html);
+
+        /* Just in case we need to double-check the original string
+        //TODO: Remove this before hand in
+        // Print the complete message on screen.
+        printf("----------------------\n");
+        printf("%s\n", message->str);
+        printf("----------------------\n");
+        */
+
+        // Adding to log file timestamp, ip, port, requested URL
+        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port), "200");
+       
+        // Send the message back.
+        r = send(connfd, response->str, (size_t) response->len, 0);
+        if (r == -1) {
+            perror("send");
+            exit(EXIT_FAILURE);
+        }
+
+        // Close the connection.
+        r = shutdown(connfd, SHUT_RDWR);
+        if (r == -1) {
+            perror("shutdown");
+            exit(EXIT_FAILURE);
+        }
+        
+        r  = close(connfd);
+        if (r == -1) {
+            perror("close");
+            exit(EXIT_FAILURE);
+        }
+
+        reset_request(&request);
+    }
+}
 
 char *get_status_code(char *status_code) {
     if (strcmp(status_code, "200") == 0) {
@@ -143,7 +290,6 @@ GString *generate_html(Request *request, char *ip, uint16_t port) {
     g_string_free(path_and_query, TRUE);
     return html;
 }
-
 
 void parse_header(gchar *line, Request *request) {
     // Split line into token and info
@@ -302,120 +448,4 @@ void write_to_log(Request *request, char *ip, uint16_t port, char *status_code) 
     fflush(logfile);
     g_date_time_unref(time);
     
-}
-
-int main(int argc, char **argv)
-{
-	// Check if number of arguments are correct
-    if(argc != 2) {
-		fprintf(stderr, "Usage: %s <port>\n", argv[0]);
-		exit(EXIT_FAILURE);
-	}
-
-	// Get the port number form command line
-	int port = atoi(argv[1]);
-
-	// Open the log file
-	logfile = fopen("httpd.log","a");
-	if (logfile == NULL) {
-		perror("Failed to open/create log file");
-		exit(EXIT_FAILURE);
-	}
-	
-    int r;
-    struct sockaddr_in server, client;
-    GString *message = g_string_sized_new(1024);
-
-    // Create and bind a TCP socket.
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-
-    // Network functions need arguments in network byte order instead of
-    // host byte order. The macros htonl, htons convert the values.
-    memset(&server, 0, sizeof(server));
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = htons(port);
-    r = bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
-    if (r == -1) {
-        perror("bind");
-        exit(EXIT_FAILURE);
-    }
-
-    // Before the server can accept messages, it has to listen to the
-    // welcome port. A backlog of one connection is allowed.
-    r = listen(sockfd, 1);
-    if (r == -1) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-	}
-	fprintf(stdout, "Listening on port %d...\n", port);
-	
-
-    while (1337) {
-
-        // We first have to accept a TCP connection, connfd is a fresh
-        // handle dedicated to this connection.
-        socklen_t len = (socklen_t) sizeof(client);
-        int connfd = accept(sockfd, (struct sockaddr *) &client, &len);
-        if (connfd == -1) {
-            perror("accept");
-            exit(EXIT_FAILURE);
-        }
-
-        // Empty message.
-        g_string_truncate (message, 0); 
-
-        // Receive from connfd, not sockfd.
-        ssize_t n = recv(connfd, message->str, message->allocated_len - 1, 0);
-        if (n == -1) {
-            perror("recv");
-            exit(EXIT_FAILURE);
-        }
-        
-        // Create a Request and fill into the various fields, using the message received
-        Request request;
-        init_request(&request);
-        fill_request(message, &request);
-
-        // Generate the response html for GET and POST
-        GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-        GString *response = generate_response(&request, "200", html);
-
-        /* Just in case we need to double-check the original string
-        //TODO: Remove this before hand in
-        // Print the complete message on screen.
-        printf("----------------------\n");
-        printf("%s\n", message->str);
-        printf("----------------------\n");
-        */
-
-        // Adding to log file timestamp, ip, port, requested URL
-        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port), "200");
-       
-        // Send the message back.
-        r = send(connfd, response->str, (size_t) response->len, 0);
-        if (r == -1) {
-            perror("send");
-            exit(EXIT_FAILURE);
-        }
-
-        // Close the connection.
-        r = shutdown(connfd, SHUT_RDWR);
-        if (r == -1) {
-            perror("shutdown");
-            exit(EXIT_FAILURE);
-        }
-        
-        r  = close(connfd);
-        if (r == -1) {
-            perror("close");
-            exit(EXIT_FAILURE);
-        }
-
-        reset_request(&request);
-    }
 }
