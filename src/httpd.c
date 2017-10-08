@@ -45,9 +45,14 @@
 #include <arpa/inet.h>
 
 /* ----- GLOBAL VARIABLES ----- */
+const ssize_t BUFFER_SIZE = 1024;
+const int TIMEOUT = 30;
+
 FILE *logfile = NULL;
 int sockfd;
-const ssize_t BUFFER_SIZE = 1024;
+GQueue *queue;
+int r;
+struct sockaddr_in server, client;
 
 typedef struct {
 	GString *method;
@@ -70,9 +75,13 @@ typedef struct {
     int connfd;
     GTimer *timer;
     struct sockaddr_in client;
-    // Maybe:?
-    // int request count; 
+    int request_count;
 } Connection;
+
+void handle_timeout(Connection *connection);
+void add_client(Connection *connection, struct sockaddr_in *client, socklen_t *len);
+void serve_next_client(Connection *connection);
+void close_connection(Connection *connection);
 
 /* Takes in a status code number ast str. 
     and gets returned appropriate header status code. */
@@ -123,9 +132,6 @@ int main(int argc, char **argv)
 		perror("Failed to open/create log file");
 		exit(EXIT_FAILURE);
 	}
-	
-    int r;
-    struct sockaddr_in server, client;
 
     // Create and bind a TCP socket.
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -155,86 +161,123 @@ int main(int argc, char **argv)
 	}
 	fprintf(stdout, "Listening on port %d...\n", port);
 	
+    queue = g_queue_new();
 
     while (1337) {
 
+        printf("Current Size of Queue: %d\n", g_queue_get_length(queue));
+
         // We first have to accept a TCP connection, connfd is a fresh
         // handle dedicated to this connection.
-        Connection connection;
-        
+        Connection *connection = g_new0(Connection, 1);
+
         socklen_t len = (socklen_t) sizeof(client);
-        connection.connfd = accept(sockfd, (struct sockaddr *) &client, &len);
-        connection.timer = g_timer_new();
-        connection.client = client;
+        add_client(connection, &client, &len);
+
+        //printf("Master socket is: %d\n", sockfd);
+        printf("New connection from %s:%d on socket %d\n", inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port), connection->connfd);
         
-        if (connection.connfd == -1) {
-            perror("accept");
-            exit(EXIT_FAILURE);
-        }
-        
-        GString *message = g_string_sized_new(BUFFER_SIZE);
-        char buffer[BUFFER_SIZE];
-        g_string_truncate (message, 0); // empty provided GString variable
-        ssize_t n;
+        serve_next_client(g_queue_peek_head(queue));
 
-        do {
-            // Receive from connfd, not sockfd.
-            n = recv(connection.connfd, buffer, BUFFER_SIZE, 0);
-            if (n == -1) {
-                perror("recv");
-                exit(EXIT_FAILURE);
-            }
-            if (n == 0) {
-                break;
-            }
-            g_string_append_len(message, buffer, n);
-        } while(n >= BUFFER_SIZE);
-        
-
-        printf("\nRECIEVED MESSAGE:\n%s\n", message->str);
-        
-        // Create a Request and fill into the various fields, using the message received
-        Request request;
-        init_request(&request);
-        fill_request(message, &request);
-
-        // Generate the response html for GET and POST
-        GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-        GString *response = generate_response(&request, html);
-
-        /* Just in case we need to double-check the original string
-        //TODO: Remove this before hand in
-        // Print the complete message on screen.
-        printf("----------------------\n");
-        printf("%s\n", message->str);
-        printf("----------------------\n");
-        */
-
-        // Adding to log file timestamp, ip, port, requested URL
-        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-       
-        // Send the message back.
-        r = send(connection.connfd, response->str, (size_t) response->len, 0);
-        if (r == -1) {
-            perror("send");
-            exit(EXIT_FAILURE);
-        }
-
-        // Close the connection.
-        r = shutdown(connection.connfd, SHUT_RDWR);
-        if (r == -1) {
-            perror("shutdown");
-            exit(EXIT_FAILURE);
-        }
-        
-        r  = close(connection.connfd);
-        if (r == -1) {
-            perror("close");
-            exit(EXIT_FAILURE);
-        }
-
-        reset_request(&request);
+        g_queue_foreach(queue, (GFunc) handle_timeout, NULL);
     }
+}
+
+void add_client(Connection *connection, struct sockaddr_in *client, socklen_t *len) {
+    
+    connection->connfd = accept(sockfd, (struct sockaddr *) client, len);
+
+    if (connection->connfd == -1) {
+        perror("accept");
+        exit(EXIT_FAILURE);
+    }
+
+    connection->timer = g_timer_new();
+    connection->client = *client;
+    connection->request_count = 1;
+
+    g_queue_push_tail(queue, connection);
+}
+
+void serve_next_client(Connection *connection) {
+    GString *message = g_string_sized_new(BUFFER_SIZE);
+    char buffer[BUFFER_SIZE];
+    g_string_truncate (message, 0); // empty provided GString variable
+    ssize_t n;
+
+    // Recieve message from connection
+    do {
+        // Receive from connfd, not sockfd.
+        n = recv(connection->connfd, buffer, BUFFER_SIZE, 0);
+        if (n == -1) {
+            perror("recv");
+            exit(EXIT_FAILURE);
+        }
+        if (n == 0) {
+            break;
+        }
+        g_string_append_len(message, buffer, n);
+    } while(n >= BUFFER_SIZE);
+    
+    printf("\nRECIEVED MESSAGE:\n%s\n", message->str);
+    
+    // Create a Request and fill into the various fields, using the message received
+    Request request;
+    init_request(&request);
+    fill_request(message, &request);
+
+    // Generate the response html for GET and POST
+    GString *html = generate_html(&request, inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port));
+    GString *response = generate_response(&request, html);
+
+    // Adding to log file timestamp, ip, port, requested URL
+    write_to_log(&request, inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port));
+   
+    // Send the message back.
+    r = send(connection->connfd, response->str, (size_t) response->len, 0);
+    if (r == -1) {
+        perror("send");
+        exit(EXIT_FAILURE);
+    }
+
+    reset_request(&request);
+}
+
+void handle_timeout(Connection *connection) {
+    gdouble time_elapsed = g_timer_elapsed(connection->timer, NULL);
+    printf("Checking timeout! Elapsed: %f\n", time_elapsed);
+
+    if (time_elapsed >= TIMEOUT) {
+        printf("TRYING TO REMOVE CONNECTION!\n");
+        close_connection(connection);
+    }
+}
+
+void close_connection(Connection *connection) {
+    printf("Closing connection from %s:%d on socket %d\n", 
+        inet_ntoa(connection->client.sin_addr), 
+        ntohs(connection->client.sin_port), 
+        connection->connfd);
+
+    // Close the connection.
+    r = shutdown(connection->connfd, SHUT_RDWR);
+    if (r == -1) {
+        perror("shutdown");
+        exit(EXIT_FAILURE);
+    }
+
+    r  = close(connection->connfd);
+    if (r == -1) {
+        perror("close");
+        exit(EXIT_FAILURE);
+    }
+
+    g_timer_destroy(connection->timer);
+
+    // Remove connection from the queue
+    g_queue_remove(queue, connection);
+
+    g_free(connection);
 }
 
 char *get_status_code(char *status_code) {
