@@ -49,7 +49,7 @@ FILE *logfile = NULL;
 int sockfd;
 const ssize_t BUFFER_SIZE = 1024;
 
-typedef struct Request {
+typedef struct {
 	GString *method;
 	GString *path;
     GString *query;
@@ -64,12 +64,15 @@ typedef struct Request {
 	GString *connection;
     GString *msg_body;
     GString *status_code;
-	// TODO: maybe we need this?
-	/*
-	bool connection_close;
-	GHashTable* headers;
-	*/
 } Request;
+
+typedef struct {
+    int connfd;
+    GTimer *timer;
+    struct sockaddr_in client;
+    // Maybe:?
+    // int request count; 
+} Connection;
 
 /* Takes in a status code number ast str. 
     and gets returned appropriate header status code. */
@@ -157,13 +160,17 @@ int main(int argc, char **argv)
 
         // We first have to accept a TCP connection, connfd is a fresh
         // handle dedicated to this connection.
+        Connection connection;
+        
         socklen_t len = (socklen_t) sizeof(client);
-        int connfd = accept(sockfd, (struct sockaddr *) &client, &len);
-        if (connfd == -1) {
+        connection.connfd = accept(sockfd, (struct sockaddr *) &client, &len);
+        connection.timer = g_timer_new();
+        connection.client = client;
+        
+        if (connection.connfd == -1) {
             perror("accept");
             exit(EXIT_FAILURE);
         }
-
         
         GString *message = g_string_sized_new(BUFFER_SIZE);
         char buffer[BUFFER_SIZE];
@@ -172,7 +179,7 @@ int main(int argc, char **argv)
 
         do {
             // Receive from connfd, not sockfd.
-            n = recv(connfd, buffer, BUFFER_SIZE, 0);
+            n = recv(connection.connfd, buffer, BUFFER_SIZE, 0);
             if (n == -1) {
                 perror("recv");
                 exit(EXIT_FAILURE);
@@ -207,20 +214,20 @@ int main(int argc, char **argv)
         write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
        
         // Send the message back.
-        r = send(connfd, response->str, (size_t) response->len, 0);
+        r = send(connection.connfd, response->str, (size_t) response->len, 0);
         if (r == -1) {
             perror("send");
             exit(EXIT_FAILURE);
         }
 
         // Close the connection.
-        r = shutdown(connfd, SHUT_RDWR);
+        r = shutdown(connection.connfd, SHUT_RDWR);
         if (r == -1) {
             perror("shutdown");
             exit(EXIT_FAILURE);
         }
         
-        r  = close(connfd);
+        r  = close(connection.connfd);
         if (r == -1) {
             perror("close");
             exit(EXIT_FAILURE);
