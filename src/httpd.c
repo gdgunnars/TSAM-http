@@ -71,7 +71,6 @@ typedef struct Request {
 } Request;
 
 char *get_status_code(char *status_code) {
-    printf("I'M GETTING THIS STATUS CODE ---> %s\n", status_code);
     if (strcmp(status_code, "200") == 0) {
         return "200 OK";
     }
@@ -118,9 +117,9 @@ GString *generate_response(Request *request, char *status_code, GString *html) {
     if (strcmp(status_code, "405") == 0) {
         g_string_append_printf(response, "Allow: GET, POST, HEAD\r\n");
     }
-    g_string_append_printf(response, "\r\n%s", html->str);
-
-    printf("RESPONSE ------------>\n%s\n", response->str);
+    if (strcmp(request->method->str, "GET") == 0 || strcmp(request->method->str, "POST") == 0 ) {
+        g_string_append_printf(response, "\r\n%s", html->str);
+    }
 
     g_date_time_unref(time);
 
@@ -135,7 +134,6 @@ GString *generate_html(Request *request, char *ip, uint16_t port) {
     if (request->query->len < 1) {
         g_string_printf(path_and_query, "%s", request->path->str);
     }
-    printf("HOST ----> %s\n", request->host->str);
     g_string_printf(html, "<!DOCTYPE html>\n<html>\n<head>\r\n\t"
                         "<title>S00b3r 1337 r3sp0ns3 p4g3</title>\n</head>\n<body>\n"
                         "\thttp://%s%s %s:%d\n"
