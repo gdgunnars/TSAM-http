@@ -79,7 +79,7 @@ typedef struct {
 } Connection;
 
 void handle_timeout(Connection *connection);
-void add_client(Connection *connection, struct sockaddr_in *client, socklen_t *len);
+void add_client(Connection *connection, struct sockaddr_in *client, int connfd);
 void serve_next_client(Connection *connection);
 void close_connection(Connection *connection);
 
@@ -172,10 +172,15 @@ int main(int argc, char **argv)
         Connection *connection = g_new0(Connection, 1);
 
         socklen_t len = (socklen_t) sizeof(client);
-        add_client(connection, &client, &len);
+        int connfd = accept(sockfd, (struct sockaddr *) &client, &len);
+
+        add_client(connection, &client, connfd);
 
         //printf("Master socket is: %d\n", sockfd);
-        printf("New connection from %s:%d on socket %d\n", inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port), connection->connfd);
+        printf("New connection from %s:%d on socket %d\n", 
+            inet_ntoa(connection->client.sin_addr), 
+            ntohs(connection->client.sin_port), 
+            connection->connfd);
         
         serve_next_client(g_queue_peek_head(queue));
 
@@ -183,9 +188,9 @@ int main(int argc, char **argv)
     }
 }
 
-void add_client(Connection *connection, struct sockaddr_in *client, socklen_t *len) {
+void add_client(Connection *connection, struct sockaddr_in *client, int connfd) {
     
-    connection->connfd = accept(sockfd, (struct sockaddr *) client, len);
+    connection->connfd = connfd;
 
     if (connection->connfd == -1) {
         perror("accept");
@@ -218,6 +223,7 @@ void serve_next_client(Connection *connection) {
         }
         g_string_append_len(message, buffer, n);
     } while(n >= BUFFER_SIZE);
+    printf("Length of message: %zd\n", message->len);
     
     printf("\nRECIEVED MESSAGE:\n%s\n", message->str);
     
@@ -225,7 +231,6 @@ void serve_next_client(Connection *connection) {
     Request request;
     init_request(&request);
     fill_request(message, &request);
-
     // Generate the response html for GET and POST
     GString *html = generate_html(&request, inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port));
     GString *response = generate_response(&request, html);
@@ -240,13 +245,17 @@ void serve_next_client(Connection *connection) {
         exit(EXIT_FAILURE);
     }
 
+    // Close connection if connection is not keep alive
+    if (request.connection->len > 0 && g_ascii_strcasecmp(request.connection->str, "keep-alive") != 0) {
+        close_connection(connection);
+    }
+
     reset_request(&request);
 }
 
 void handle_timeout(Connection *connection) {
     gdouble time_elapsed = g_timer_elapsed(connection->timer, NULL);
-    printf("Checking timeout! Elapsed: %f\n", time_elapsed);
-
+    printf("Checking timeout! Elapsed: %p %f\n", (void*)&connection, time_elapsed);
     if (time_elapsed >= TIMEOUT) {
         printf("TRYING TO REMOVE CONNECTION!\n");
         close_connection(connection);
@@ -277,7 +286,7 @@ void close_connection(Connection *connection) {
     // Remove connection from the queue
     g_queue_remove(queue, connection);
 
-    g_free(connection);
+    //g_free(connection);
 }
 
 char *get_status_code(char *status_code) {
@@ -418,11 +427,15 @@ bool fill_request(GString *message, Request *request)
     g_string_truncate(request->msg_body, 0);
     request->msg_body = g_string_new(header_and_body[1]);
     
+    printf("before firstline split\n");
     // Split the message on a newline to simplify extracting headers
     gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\r\n", 2);
+    printf("after firstline split\n");
     
+    printf("before header1 split\n");
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
+    printf("after header1 split\n");
 
     if (g_ascii_strcasecmp(header_1[0], "GET") == 0) {
         request->method = g_string_new("GET");
@@ -442,8 +455,10 @@ bool fill_request(GString *message, Request *request)
     
     //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
+        printf("before path_query split\n");
         // Since we have a query, we split the string on "?".
         gchar **path_and_query = g_strsplit(header_1[1], "?", 2);
+        printf("after path_query split\n");
 
         // Set the request values correctly.
         request->path = g_string_new(path_and_query[0]);
@@ -457,14 +472,19 @@ bool fill_request(GString *message, Request *request)
     
     // Assign the http version.
     request->http_version = g_string_new(header_1[2]);
-    if (strcmp(request->http_version->str, "HTTP/1.1") != 0 && strcmp(request->http_version->str, "HTTP/1.0") != 0) {
+    if (g_ascii_strcasecmp(request->http_version->str, "HTTP/1.1") != 0 && g_ascii_strcasecmp(request->http_version->str, "HTTP/1.0") != 0) {
         // HTTP version not supported
         request->status_code = g_string_new("505");
     }
+
+    if (g_ascii_strcasecmp(request->http_version->str, "HTTP/1.1") == 0) {
+        request->connection = g_string_new("Keep-Alive");
+    }
     
-    
+    printf("before lines split\n");
     // Split the header into separate lines and parse each line one at a time.
     gchar **lines = g_strsplit(first_line_and_the_rest[1], "\r\n", -1);
+    printf("after lines split\n");
 
     for (guint i = 0; i < g_strv_length(lines); i++) {
         parse_header(lines[i], request);
