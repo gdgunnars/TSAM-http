@@ -202,7 +202,7 @@ bool fill_request(GString *message, Request *request)
     request->msg_body = g_string_new(header_and_body[1]);
     
     // Split the message on a newline to simplify extracting headers
-    gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\n", 2);
+    gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\r\n", 2);
     
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
@@ -241,7 +241,7 @@ bool fill_request(GString *message, Request *request)
     
     
     // Split the header into separate lines and parse each line one at a time.
-    gchar **lines = g_strsplit(first_line_and_the_rest[1], "\n", -1);
+    gchar **lines = g_strsplit(first_line_and_the_rest[1], "\r\n", -1);
 
     for (guint i = 0; i < g_strv_length(lines); i++) {
         parse_header(lines[i], request);
