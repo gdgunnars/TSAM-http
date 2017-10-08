@@ -62,7 +62,8 @@ typedef struct Request {
 	GString *accept_language;
 	GString *accept_encoding;
 	GString *connection;
-	GString *msg_body;
+    GString *msg_body;
+    GString *status_code;
 	// TODO: maybe we need this?
 	/*
 	bool connection_close;
@@ -76,7 +77,7 @@ char *get_status_code(char *status_code);
 
 /* Generates the response to send back. 
     Header & body (when needed). */
-GString *generate_response(Request *request, char *status_code, GString *html);
+GString *generate_response(Request *request, GString *html);
 
 /* Generate the in memory html response */
 GString *generate_html(Request *request, char *ip, uint16_t port);
@@ -192,7 +193,7 @@ int main(int argc, char **argv)
 
         // Generate the response html for GET and POST
         GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-        GString *response = generate_response(&request, "200", html);
+        GString *response = generate_response(&request, html);
 
         /* Just in case we need to double-check the original string
         //TODO: Remove this before hand in
@@ -254,20 +255,21 @@ char *get_status_code(char *status_code) {
     else if (strcmp(status_code, "417") == 0) {
         return "417 Expectation Failed";
     }
-    return "UNKNOWN";
+    return "200 OK";
 }
 
-GString *generate_response(Request *request, char *status_code, GString *html) {
+GString *generate_response(Request *request, GString *html) {
     GDateTime *time = g_date_time_new_now_local();
     gchar *date_time = g_date_time_format(time, "%a, %m %b %Y %H:%M:%S %Z");
     GString *response = g_string_new(NULL);
-
-    char *status = get_status_code(status_code);
-    if (strcmp(status, "UNKNOWN") == 0) {
-        // TODO: unknown status code, server error?
-        printf("UNKNOWN STATUS CODE!!!!");
+    char *status;
+    if (request->status_code->len > 0) {
+         status = get_status_code(request->status_code->str);
     }
-
+    else {
+        status = "200 OK";
+    }
+    
     GString *http_version = g_string_new(request->http_version->str);
 
     g_string_printf(response, "%s %s\r\n"
@@ -276,7 +278,7 @@ GString *generate_response(Request *request, char *status_code, GString *html) {
                             "Content-Length: %zd\r\n"
                             "Content-Type: text/html; charset=utf-8\r\n",
                             http_version->str, status, date_time, html->len);
-    if (strcmp(status_code, "405") == 0) {
+    if (strcmp(request->status_code->str, "405") == 0) {
         g_string_append_printf(response, "Allow: GET, POST, HEAD\r\n");
     }
     if (strcmp(request->method->str, "GET") == 0 || strcmp(request->method->str, "POST") == 0 ) {
@@ -337,7 +339,8 @@ void parse_header(gchar *line, Request *request) {
         request->connection = g_string_new(info);
     }
     else if (g_ascii_strcasecmp(token, "Expect") == 0) {
-        // TODO: return 417 Expectation Failed
+        // Expectation failed
+        request->status_code = g_string_new("417");
     }
     else {
         printf("%s\n", "parse error");
@@ -381,7 +384,9 @@ bool fill_request(GString *message, Request *request)
         request->method = g_string_new("POST");
     }
     else {
-        // TODO: Unknown prefix, should probably return immediatly with some perror!
+        // Method not implemented
+        request->method = g_string_new(header_1[0]);
+        request->status_code = g_string_new("501");
     }
 
     
@@ -402,6 +407,10 @@ bool fill_request(GString *message, Request *request)
     
     // Assign the http version.
     request->http_version = g_string_new(header_1[2]);
+    if (strcmp(request->http_version->str, "HTTP/1.1") != 0 && strcmp(request->http_version->str, "HTTP/1.0") != 0) {
+        // HTTP version not supported
+        request->status_code = g_string_new("505");
+    }
     
     
     // Split the header into separate lines and parse each line one at a time.
@@ -444,6 +453,7 @@ void init_request(Request *req) {
     req->accept_encoding = g_string_new(NULL);
     req->connection = g_string_new(NULL);
     req->msg_body = g_string_new(NULL);
+    req->status_code = g_string_new(NULL);
 }
 
 void reset_request(Request *req) {
@@ -460,6 +470,7 @@ void reset_request(Request *req) {
     g_string_free(req->accept_encoding, TRUE);
     g_string_free(req->connection, TRUE);
     g_string_free(req->msg_body, TRUE);
+    g_string_free(req->status_code, TRUE);
 }
 
 void write_to_log(Request *request, char *ip, uint16_t port, char *status_code) {
