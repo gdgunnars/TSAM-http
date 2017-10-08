@@ -184,7 +184,7 @@ int main(int argc, char **argv)
         } while(n >= BUFFER_SIZE);
         
 
-        printf("\nMESSAGE:\n%s\n", message->str);
+        printf("\nRECIEVED MESSAGE:\n%s\n", message->str);
         
         // Create a Request and fill into the various fields, using the message received
         Request request;
