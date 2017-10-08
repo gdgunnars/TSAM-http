@@ -48,29 +48,6 @@
 FILE *logfile = NULL;
 int sockfd;
 
-/* ----- TYPEDEFS ----- */
-/*typedef enum {
-	GET,
-	HEAD,
-	POST,
-	PUT,
-	DELETE,
-	CONNECT,
-	OPTIONS,
-	TRACE
-} Method;*/
-
-const char* methods[] = {
-	"GET",
-	"HEAD",
-	"POST",
-	"PUT",
-	"DELETE",
-	"CONNECT",
-	"OPTIONS",
-	"TRACE"
-};
-
 
 typedef struct Request {
 	GString *method;
@@ -92,29 +69,82 @@ typedef struct Request {
 	GHashTable* headers;
 	*/
 } Request;
-/*
-typedef enum {
-    GET,
-    POST,
-    HEAD,
-    PATH,
-    QUERY,
-    VERSION,
-    HOST,
-    USER_AGENT,
-    CONTENT_TYPE,
-    CONTENT_LENGTH,
-    ACCEPT_LANGUAGE,
-    ACCEPT_ENCODING,
-    CONNECTION,
-    BODY
-} TokenCode;
 
-typedef struct {
-    GString lexeme;
-    TokenCode t_code;
-} Token;
-*/
+char *get_status_code(char *status_code) {
+    printf("I'M GETTING THIS STATUS CODE ---> %s\n", status_code);
+    if (strcmp(status_code, "200") == 0) {
+        return "200 OK";
+    }
+    else if (strcmp(status_code, "405") == 0) {
+        return "405 Method Not Allowed";
+    }
+    else if (strcmp(status_code, "501") == 0) {
+        return "501 Not Implemented";
+    }
+    else if (strcmp(status_code, "505") == 0) {
+        return "505 HTTP Version not supported";
+    }
+    else if (strcmp(status_code, "500") == 0) {
+        return "500 Internal Server Error";
+    }
+    else if (strcmp(status_code, "415") == 0) {
+        return "415 Unsupported Media Type";
+    }
+    else if (strcmp(status_code, "408") == 0) {
+        return "408 Request Timeout";
+    }
+    return "UNKNOWN";
+}
+
+GString *generate_response(Request *request, char *status_code, GString *html) {
+    GDateTime *time = g_date_time_new_now_local();
+    gchar *date_time = g_date_time_format(time, "%a, %m %b %Y %H:%M:%S %Z");
+    GString *response = g_string_new(NULL);
+
+    char *status = get_status_code(status_code);
+    if (strcmp(status, "UNKNOWN") == 0) {
+        // TODO: unknown status code
+        printf("UNKNOWN STATUS CODE!!!!");
+    }
+
+    GString *http_version = g_string_new(request->http_version->str);
+
+    g_string_printf(response, "%s %s\r\n"
+                            "Date: %s\r\n"
+                            "Server: S00ber 1337 S3rv3r\r\n"
+                            "Content-Length: %zd\r\n"
+                            "Content-Type: text/html; charset=utf-8\r\n",
+                            http_version->str, status, date_time, html->len);
+    if (strcmp(status_code, "405") == 0) {
+        g_string_append_printf(response, "Allow: GET, POST, HEAD\r\n");
+    }
+    g_string_append_printf(response, "\r\n%s", html->str);
+
+    printf("RESPONSE ------------>\n%s\n", response->str);
+
+    g_date_time_unref(time);
+
+    return response;
+}
+
+GString *generate_html(Request *request, char *ip, uint16_t port) {
+    GString *html = g_string_new(NULL);
+    GString *path_and_query = g_string_new(NULL);
+    
+    g_string_printf(path_and_query, "%s?%s", request->path->str, request->query->str);
+    if (request->query->len < 1) {
+        g_string_printf(path_and_query, "%s", request->path->str);
+    }
+    printf("HOST ----> %s\n", request->host->str);
+    g_string_printf(html, "<!DOCTYPE html>\n<html>\n<head>\r\n\t"
+                        "<title>S00b3r 1337 r3sp0ns3 p4g3</title>\n</head>\n<body>\n"
+                        "\thttp://%s%s %s:%d\n"
+                        "\t%s\n"
+                        "</body>\n</html>",
+                        request->host->str, path_and_query->str, ip, port, request->msg_body->str);
+    g_string_free(path_and_query, TRUE);
+    return html;
+}
 
 
 void parse_header(gchar *line, Request *request) {
@@ -123,10 +153,10 @@ void parse_header(gchar *line, Request *request) {
     gchar *token = g_strstrip(split[0]);
     gchar *info = g_strstrip(split[1]);
 
-    if (g_ascii_strcasecmp(token, "host") == 0) {
+    if (g_ascii_strcasecmp(token, "Host") == 0) {
         request->host = g_string_new(info);
     }
-    else if (g_ascii_strcasecmp(token, "user-agent") == 0) {
+    else if (g_ascii_strcasecmp(token, "User-Agent") == 0) {
         request->user_agent = g_string_new(info);
     }
     else if (g_ascii_strcasecmp(token, "Content-Type") == 0) {
@@ -170,34 +200,26 @@ bool fill_request(GString *message, Request *request)
     gchar **header_and_body = g_strsplit(message->str, "\r\n\r\n", 2);
     // Immediatly assign body to request
     request->msg_body = g_string_new(header_and_body[1]);
-
-    fprintf(stdout, "Msg body: %s\n", request->msg_body->str);
-    printf("\n");
-
-    // Check if body is empty
-    if (request->msg_body->len == 0) {
-        fprintf(stdout, "<- string is empty ->\n");
-    } 
-    
-    // Check the method of the message
-    if (g_str_has_prefix(message->str, "GET")) {
-        request->method = g_string_new("GET");
-    }
-    else if (g_str_has_prefix(message->str, "HEAD")) {
-        request->method = g_string_new("HEAD");
-    }
-    else if (g_str_has_prefix(message->str, "POST")) {
-        request->method = g_string_new("POST");
-    }
-    else {
-        // TODO: Unknown prefix, should probably return immediatly with some perror!
-    }
     
     // Split the message on a newline to simplify extracting headers
     gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\n", 2);
     
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
+
+    if (g_ascii_strcasecmp(header_1[0], "GET") == 0) {
+        request->method = g_string_new("GET");
+    }
+    else if (g_ascii_strcasecmp(header_1[0], "HEAD") == 0) {
+        request->method = g_string_new("HEAD");
+    }
+    else if (g_ascii_strcasecmp(header_1[0], "POST") == 0) {
+        request->method = g_string_new("POST");
+    }
+    else {
+        // TODO: Unknown prefix, should probably return immediatly with some perror!
+    }
+
     
     //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
@@ -222,7 +244,6 @@ bool fill_request(GString *message, Request *request)
     gchar **lines = g_strsplit(first_line_and_the_rest[1], "\n", -1);
 
     for (guint i = 0; i < g_strv_length(lines); i++) {
-        // do stuff
         parse_header(lines[i], request);
     }
 
@@ -236,10 +257,6 @@ bool fill_request(GString *message, Request *request)
     printf("Content length: %s\n", request->content_length->str);
     printf("Content type: %s\n", request->content_type->str);
     
-    //
-    
-    // TODO: Parse rest of query into the proper variablez
-
     // TODO: We need to remember to use g_strfreev()  to free the array's.
     g_strfreev(header_and_body);
     g_strfreev(first_line_and_the_rest);
@@ -280,11 +297,10 @@ void reset_request(Request *req) {
     g_string_free(req->msg_body, TRUE);
 }
 
-void write_to_log(Request *request, char *ip, uint16_t port){
-
+void write_to_log(Request *request, char *ip, uint16_t port, char *status_code) {
     GDateTime *time = g_date_time_new_now_local();
     gchar *date_time = g_date_time_format(time, "%Y-%m-%dT%H:%M:%SZ");
-    fprintf(logfile, "%s : %s:%d %s %s : 200\n", date_time, ip, port, request->method->str, request->path->str);
+    fprintf(logfile, "%s : %s:%d %s %s : %s\n", date_time, ip, port, request->method->str, request->path->str, status_code);
     fflush(logfile);
     g_date_time_unref(time);
     
@@ -367,6 +383,10 @@ int main(int argc, char **argv)
         init_request(&request);
         fill_request(message, &request);
 
+        // Generate the response html for GET and POST
+        GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
+        GString *response = generate_response(&request, "200", html);
+
         /* Just in case we need to double-check the original string
         //TODO: Remove this before hand in
         // Print the complete message on screen.
@@ -376,11 +396,10 @@ int main(int argc, char **argv)
         */
 
         // Adding to log file timestamp, ip, port, requested URL
-        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
+        write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port), "200");
        
-
         // Send the message back.
-        r = send(connfd, message->str, (size_t) n, 0);
+        r = send(connfd, response->str, (size_t) response->len, 0);
         if (r == -1) {
             perror("send");
             exit(EXIT_FAILURE);
