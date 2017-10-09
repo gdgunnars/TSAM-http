@@ -48,23 +48,14 @@
 #include <regex.h>
 #include <arpa/inet.h>
 
-typedef struct {
-    int connfd;
-    GTimer *timer;
-    struct sockaddr_in client;
-    int request_count;
-} Connection;
-
 /* ----- GLOBAL VARIABLES ----- */
 const ssize_t BUFFER_SIZE = 1024;
 const int TIMEOUT = 30;
 
 FILE *logfile = NULL;
 int sockfd;
-GQueue *queue;
 int r, i, j, len;
 struct sockaddr_in server, client;
-Connection *current_connection = NULL;
 struct pollfd fds[200];
 int nfds = 1;
 int new_sd = -1;
@@ -94,9 +85,7 @@ typedef struct {
 
 void array_compression(bool compress_array);
 void handle_timeout(int connfd, GTimer *timer);
-void add_client(Connection *connection, struct sockaddr_in *client, int connfd);//TODO: remove
 void serve_next_client(int connfd);
-void close_connection(Connection *connection);//TODO: remove
 
 /* Takes in a status code number ast str. 
     and gets returned appropriate header status code. */
@@ -200,8 +189,6 @@ int main(int argc, char **argv)
 	}
 	fprintf(stdout, "Listening on port %d...\n", port);
 	
-    queue = g_queue_new();
-
     // Initialize the pollfd structure  
     memset(fds, 0, sizeof(fds));
 
@@ -214,7 +201,6 @@ int main(int argc, char **argv)
     while (server_is_running) {
 
         printf("\n###########################################################\n");
-        printf("Current Size of Queue: %d\n", g_queue_get_length(queue));
 
         printf("Waiting on poll()...\n");
         r = poll(fds, nfds, 1000*60);
@@ -294,7 +280,7 @@ int main(int argc, char **argv)
                 // If the close_conn flag was turned on, we need to clean up this active connection. 
                 // This clean up process includes removing the descriptor.
                 if (close_conn) {
-                    // TODO: clean up connection
+                    printf("CLOSING THE MOTHER F-ING CONNECTION YO\n");
                     close(fds[i].fd);
                     g_hash_table_remove(connections, &fds[i].fd);
                     fds[i].fd = -1;
@@ -319,44 +305,6 @@ int main(int argc, char **argv)
         if(fds[i].fd >= 0)
         close(fds[i].fd);
     }
-
-    // TODO: this is our code vvv
-
-        
-    /*
-        // Check if there is anything in the queue
-        if (g_queue_get_length(queue) > 0) {
-            // Check if current connection is not set or head of queue is not current connection, then set it.
-            if (current_connection == NULL || current_connection != g_queue_peek_head(queue)) {
-                current_connection = g_queue_peek_head(queue);
-                printf("Switching to connection %s:%d on socket %d\n", 
-                    inet_ntoa(current_connection->client.sin_addr), 
-                    ntohs(current_connection->client.sin_port), 
-                    current_connection->connfd);
-            }
-        }
-
-        serve_next_client(current_connection);
-
-        g_queue_foreach(queue, (GFunc) handle_timeout, NULL);
-    }
-    */
-}
-
-void add_client(Connection *connection, struct sockaddr_in *client, int connfd) {
-    
-    connection->connfd = connfd;
-
-    if (connection->connfd == -1) {
-        perror("accept");
-        exit(EXIT_FAILURE);
-    }
-
-    connection->timer = g_timer_new();
-    connection->client = *client;
-    connection->request_count = 1;
-
-    g_queue_push_tail(queue, connection);
 }
 
 void serve_next_client(int connfd) {
@@ -411,6 +359,12 @@ void serve_next_client(int connfd) {
     Request request;
     init_request(&request);
     fill_request(message, &request);
+
+    // Close connection if connection is not keep alive
+    if (request.connection->len > 0 && g_ascii_strcasecmp(request.connection->str, "keep-alive") != 0) {
+        close_conn = TRUE;
+    }
+
     // Generate the response html for GET and POST
     GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
     GString *response = generate_response(&request, html);
@@ -423,11 +377,6 @@ void serve_next_client(int connfd) {
     if (r == -1) {
         perror("send");
         exit(EXIT_FAILURE);
-    }
-
-    // Close connection if connection is not keep alive
-    if (request.connection->len > 0 && g_ascii_strcasecmp(request.connection->str, "keep-alive") != 0) {
-        close_conn = TRUE;
     }
 
     reset_request(&request);
@@ -462,34 +411,6 @@ void array_compression(bool compress_array) {
             }
         }
     }
-}
-
-void close_connection(Connection *connection) {
-    printf("Closing connection from %s:%d on socket %d\n", 
-        inet_ntoa(connection->client.sin_addr), 
-        ntohs(connection->client.sin_port), 
-        connection->connfd);
-
-    // Close the connection.
-    r = shutdown(connection->connfd, SHUT_RDWR);
-    if (r == -1) {
-        perror("shutdown");
-        exit(EXIT_FAILURE);
-    }
-
-    r  = close(connection->connfd);
-    if (r == -1) {
-        perror("close");
-        exit(EXIT_FAILURE);
-    }
-
-    g_timer_destroy(connection->timer);
-
-    // Remove connection from the queue
-    g_queue_remove(queue, connection);
-
-    current_connection = NULL;
-    g_free(connection);
 }
 
 char *get_status_code(char *status_code) {
@@ -534,17 +455,34 @@ GString *generate_response(Request *request, GString *html) {
     
     GString *http_version = g_string_new(request->http_version->str);
 
+    int content_length = html->len;
+    if (g_ascii_strcasecmp(status, "200 OK") != 0 || g_ascii_strcasecmp(request->method->str, "HEAD") == 0) {
+        content_length = 0;
+    }
+
     g_string_printf(response, "%s %s\r\n"
                             "Date: %s\r\n"
                             "Server: S00ber 1337 S3rv3r\r\n"
-                            "Content-Length: %zd\r\n"
+                            "Content-Length: %d\r\n"
                             "Content-Type: text/html; charset=utf-8\r\n",
-                            http_version->str, status, date_time, html->len);
+                            http_version->str, status, date_time, content_length);
     if (strcmp(request->status_code->str, "405") == 0) {
         g_string_append_printf(response, "Allow: GET, POST, HEAD\r\n");
     }
+    if (close_conn) {
+        g_string_append(response, "Connection: close\r\n");
+    }
+    else {
+        g_string_append(response, "Connection: keep-alive\r\n");
+		g_string_append_printf(response, "Keep-Alive: timeout=%d, max=100\r\n", TIMEOUT);
+    }
+
+
     if (strcmp(request->method->str, "GET") == 0 || strcmp(request->method->str, "POST") == 0 ) {
         g_string_append_printf(response, "\r\n%s", html->str);
+    }
+    else {
+        g_string_append(response, "\r\n");
     }
 
     g_date_time_unref(time);
@@ -606,7 +544,6 @@ void parse_header(gchar *line, Request *request) {
     }
     else {
         printf("%s\n", "parse error");
-        // TODO: parse error!
     }
 
     g_strfreev(split);
@@ -661,7 +598,6 @@ bool fill_request(GString *message, Request *request)
         request->path = g_string_new(path_and_query[0]);
         request->query = g_string_new(path_and_query[1]);
 
-        //TODO: Do we need to split the fragment from the query ? (fragment => comes after # )
     } else {
         request->path = g_string_new(header_1[1]);
         request->query = g_string_new("");
@@ -685,18 +621,6 @@ bool fill_request(GString *message, Request *request)
         parse_header(lines[i], request);
     }
 
-    /*
-    printf("Method: %s\n", request->method->str);
-    printf("Path: %s\n", request->path->str);
-    printf("query: %s\n", request->query->str);
-    printf("version: %s\n", request->http_version->str);
-    printf("Host: %s\n", request->host->str);
-    printf("User Agent: %s\n", request->user_agent->str);
-    printf("Content length: %s\n", request->content_length->str);
-    printf("Content type: %s\n", request->content_type->str);
-    */
-
-    // TODO: We need to remember to use g_strfreev()  to free the array's.
     g_strfreev(header_and_body);
     g_strfreev(first_line_and_the_rest);
     g_strfreev(header_1);
