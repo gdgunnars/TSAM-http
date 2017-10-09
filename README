@@ -20,7 +20,17 @@ The Request:
 The Connection:
     We store each connection in a hash table. The key is the connfd for the connection and the value
     is the connection with a timer that we use to check for timeout.
-    
+
+
+Keep-Alive:
+    Work in progress.
+
+Parallel connections:
+    We used this beautiful tutorial from:
+        https://www.ibm.com/support/knowledgecenter/en/ssw_i5_54/rzab6/poll.htm
+    to help us with implementing parallelism. Thank you ibm <3
+
+
 
 
 
