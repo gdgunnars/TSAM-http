@@ -33,6 +33,10 @@
 
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/poll.h>
+#include <sys/time.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <ctype.h>
 #include <string.h>
@@ -58,9 +62,16 @@ const int TIMEOUT = 30;
 FILE *logfile = NULL;
 int sockfd;
 GQueue *queue;
-int r;
+int r, i, j, len;
 struct sockaddr_in server, client;
 Connection *current_connection = NULL;
+struct pollfd fds[200];
+int nfds = 1;
+int new_sd = -1;
+int current_size = 0;
+bool close_conn = FALSE;
+bool compress_array = FALSE;
+char poll_buffer[80];
 
 typedef struct {
 	GString *method;
@@ -81,7 +92,7 @@ typedef struct {
 
 void handle_timeout(Connection *connection);
 void add_client(Connection *connection, struct sockaddr_in *client, int connfd);
-void serve_next_client(Connection *connection);
+void serve_next_client(int connfd);
 void close_connection(Connection *connection);
 
 /* Takes in a status code number ast str. 
@@ -141,6 +152,27 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    int on = 1;
+
+    // Allow socket descriptor to be reuseable  
+    r = setsockopt(sockfd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+    if (r < 0)
+    {
+        perror("setsockopt() failed");
+        close(sockfd);
+        exit(-1);
+    }
+
+    // Set socket to be nonblocking. All of the sockets for the incoming connections 
+    // will also be nonblocking since they will inherit that state from the listening socket.
+    r = ioctl(sockfd, FIONBIO, (char *)&on);
+    if (r < 0)
+    {
+      perror("ioctl() failed");
+      close(sockfd);
+      exit(-1);
+    }
+
     // Network functions need arguments in network byte order instead of
     // host byte order. The macros htonl, htons convert the values.
     memset(&server, 0, sizeof(server));
@@ -150,41 +182,155 @@ int main(int argc, char **argv)
     r = bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
     if (r == -1) {
         perror("bind");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
     // Before the server can accept messages, it has to listen to the
     // welcome port. A backlog of one connection is allowed.
-    r = listen(sockfd, 1);
+    r = listen(sockfd, 32);
     if (r == -1) {
         perror("listen");
+        close(sockfd);
         exit(EXIT_FAILURE);
 	}
 	fprintf(stdout, "Listening on port %d...\n", port);
 	
     queue = g_queue_new();
 
-    
+    // Initialize the pollfd structure  
+    memset(fds, 0, sizeof(fds));
 
-    while (1337) {
+    // Set up the initial listening socket  
+    fds[0].fd = sockfd;
+    fds[0].events = POLLIN;
+
+    bool server_is_running = TRUE;
+
+    while (server_is_running) {
+
         printf("\n###########################################################\n");
         printf("Current Size of Queue: %d\n", g_queue_get_length(queue));
 
-        // We first have to accept a TCP connection, connfd is a fresh
-        // handle dedicated to this connection.
-        Connection *connection = g_new0(Connection, 1);
+        printf("Waiting on poll()...\n");
+        r = poll(fds, nfds, TIMEOUT*1000);
+        // Check if poll() failed
+        if (r < 0) {
+            perror("  poll() failed");
+            break;
+        }
+        // Check if poll() timed out
+        if (r == 0) {
+            printf("  poll() timed out.  End program.\n");
+            break;
+        }
 
-        socklen_t len = (socklen_t) sizeof(client);
-        int connfd = accept(sockfd, (struct sockaddr *) &client, &len);
+        // One or more descriptors are readable. Need to determine which ones they are. 
+        current_size = nfds;
+        for (i = 0; i < current_size; i++) {
+            // Loop through to find the descriptors that returned POLLIN and determine whether 
+            // it's the listening or the active connection.
+            if(fds[i].revents == 0) {
+                continue;
+            }
 
-        add_client(connection, &client, connfd);
+            // If revents is not POLLIN, it's an unexpected result, log and end the server.
+            if(fds[i].revents != POLLIN) {
+                printf("  Error! revents = %d\n", fds[i].revents);
+                server_is_running = FALSE;
+                break;
+            }
 
-        //printf("Master socket is: %d\n", sockfd);
-        printf("New connection from %s:%d on socket %d\n", 
-            inet_ntoa(connection->client.sin_addr), 
-            ntohs(connection->client.sin_port), 
-            connection->connfd);
+            // There is data to read
+            if (fds[i].fd == sockfd) {
+                // Listening descriptor is readable.
+                printf("  Listening socket is readable\n");
 
+                // Accept all incoming connections that are queued up on the listening socket 
+                // before we loop back and call poll again.
+                do {
+                    socklen_t socklen = (socklen_t) sizeof(client);
+                    // Accept each incoming connection. If accept fails with EWOULDBLOCK, then we have 
+                    // accepted all of them. Any other failure on accept will cause us to end the server.
+                    new_sd = accept(sockfd, (struct sockaddr *) &client, &socklen);
+                    if (new_sd < 0) {
+                        // Check if we have accepted all of the connections
+                        if (errno != EWOULDBLOCK) {
+                            perror("  accept() failed");
+                            server_is_running = FALSE;
+                        }
+                        break;
+                    }
+
+                    /*
+                    // TODO: create connection object
+                    Connection *connection = g_new0(Connection, 1);
+                    
+                    // Create connection object and push on to queue
+                    add_client(connection, &client, new_sd);
+                    */
+                    printf("New connection from %s:%d on socket %d\n", 
+                        inet_ntoa(client.sin_addr), 
+                        ntohs(client.sin_port), 
+                        new_sd);
+                    
+
+                    // Add the new incoming connection to the pollfd structure.
+                    fds[nfds].fd = new_sd;
+                    fds[nfds].events = POLLIN;
+                    nfds++;
+                    // Loop back up and accept another incoming connection
+
+                } while (new_sd != -1);
+            }
+                
+            // This is not the listening socket, therefore an existing connection must be readable.
+            else {
+                printf("  Descriptor %d is readable\n", fds[i].fd);
+                close_conn = FALSE;
+
+                // Receive all incoming data on this socket before we loop back and call poll again.
+                serve_next_client(fds[i].fd);
+
+                // If the close_conn flag was turned on, we need to clean up this active connection. 
+                // This clean up process includes removing the descriptor.
+                if (close_conn) {
+                    // TODO: clean up connection
+                    close(fds[i].fd);
+                    fds[i].fd = -1;
+                    compress_array = TRUE;
+                }
+
+
+            }  /* End of existing connection is readable             */
+        } /* End of loop through pollable descriptors              */
+
+        // If the compress_array flag was turned on, we need to squeeze together the array and decrement 
+        // the number of file descriptors. We do not need to move back the events and revents fields 
+        // because the events will always be POLLIN in this case, and revents is output.
+        if (compress_array) {
+            compress_array = FALSE;
+            for (i = 0; i < nfds; i++) {
+                if (fds[i].fd == -1) {
+                    for(j = i; j < nfds; j++) {
+                        fds[j].fd = fds[j+1].fd;
+                    }
+                    nfds--;
+                }
+            }
+        }
+    }   // End of server running
+
+    // Clean up all of the sockets that are open
+    for (i = 0; i < nfds; i++) {
+        if(fds[i].fd >= 0)
+        close(fds[i].fd);
+    }
+
+    // TODO: this is our code vvv
+
+        
+    /*
         // Check if there is anything in the queue
         if (g_queue_get_length(queue) > 0) {
             // Check if current connection is not set or head of queue is not current connection, then set it.
@@ -201,6 +347,7 @@ int main(int argc, char **argv)
 
         g_queue_foreach(queue, (GFunc) handle_timeout, NULL);
     }
+    */
 }
 
 void add_client(Connection *connection, struct sockaddr_in *client, int connfd) {
@@ -219,13 +366,16 @@ void add_client(Connection *connection, struct sockaddr_in *client, int connfd) 
     g_queue_push_tail(queue, connection);
 }
 
-void serve_next_client(Connection *connection) {
+void serve_next_client(int connfd) {
+
+    socklen_t addrlen = (socklen_t) sizeof(client);
+    getpeername(connfd, (struct sockaddr*) &client, &addrlen);
 
     printf("\n---------------------------------\n");
     printf("Now serving %s:%d on socket %d\n", 
-        inet_ntoa(connection->client.sin_addr), 
-        ntohs(connection->client.sin_port), 
-        connection->connfd);
+        inet_ntoa(client.sin_addr), 
+        ntohs(client.sin_port), 
+        connfd);
 
 
     GString *message = g_string_sized_new(BUFFER_SIZE);
@@ -233,20 +383,31 @@ void serve_next_client(Connection *connection) {
     g_string_truncate (message, 0); // empty provided GString variable
     ssize_t n;
 
-    // Recieve message from connection
+    // Receive data on this connection until the recv fails with EWOULDBLOCK. 
+    // If any other failure occurs, we will close the connection.
     do {
         // Receive from connfd, not sockfd.
-        n = recv(connection->connfd, buffer, BUFFER_SIZE, 0);
-        if (n == -1) {
-            perror("recv");
-            exit(EXIT_FAILURE);
+        n = recv(connfd, buffer, BUFFER_SIZE, 0);
+        if (n < 0) {
+            if (errno != EWOULDBLOCK) {
+                perror("  recv() failed");
+                close_conn = TRUE;
+            }
+            break;
         }
+
+        // Check to see if the connection has been closed by the client
         if (n == 0) {
-            close_connection(connection);
+            printf("  Connection closed\n");
+            close_conn = TRUE;
             return;
         }
+        // Data was received
+
         g_string_append_len(message, buffer, n);
     } while(n >= BUFFER_SIZE);
+
+    
     printf("Length of message: %zd\n", message->len);
     
     printf("\nRECIEVED MESSAGE:\n%s\n", message->str);
@@ -256,14 +417,14 @@ void serve_next_client(Connection *connection) {
     init_request(&request);
     fill_request(message, &request);
     // Generate the response html for GET and POST
-    GString *html = generate_html(&request, inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port));
+    GString *html = generate_html(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
     GString *response = generate_response(&request, html);
 
     // Adding to log file timestamp, ip, port, requested URL
-    write_to_log(&request, inet_ntoa(connection->client.sin_addr), ntohs(connection->client.sin_port));
+    write_to_log(&request, inet_ntoa(client.sin_addr), ntohs(client.sin_port));
    
     // Send the message back.
-    r = send(connection->connfd, response->str, (size_t) response->len, 0);
+    r = send(connfd, response->str, (size_t) response->len, 0);
     if (r == -1) {
         perror("send");
         exit(EXIT_FAILURE);
@@ -271,7 +432,8 @@ void serve_next_client(Connection *connection) {
 
     // Close connection if connection is not keep alive
     if (request.connection->len > 0 && g_ascii_strcasecmp(request.connection->str, "keep-alive") != 0) {
-        close_connection(connection);
+        close_conn = TRUE;
+        //close_connection(connection);
     }
 
     reset_request(&request);
