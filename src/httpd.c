@@ -73,6 +73,8 @@ bool close_conn = FALSE;
 bool compress_array = FALSE;
 char poll_buffer[80];
 
+GHashTable *connections;
+
 typedef struct {
 	GString *method;
 	GString *path;
@@ -90,10 +92,11 @@ typedef struct {
     GString *status_code;
 } Request;
 
-void handle_timeout(Connection *connection);
-void add_client(Connection *connection, struct sockaddr_in *client, int connfd);
+void array_compression(bool compress_array);
+void handle_timeout(int connfd, GTimer *timer);
+void add_client(Connection *connection, struct sockaddr_in *client, int connfd);//TODO: remove
 void serve_next_client(int connfd);
-void close_connection(Connection *connection);
+void close_connection(Connection *connection);//TODO: remove
 
 /* Takes in a status code number ast str. 
     and gets returned appropriate header status code. */
@@ -153,6 +156,7 @@ int main(int argc, char **argv)
     }
 
     int on = 1;
+    connections = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, (GDestroyNotify) g_timer_destroy);
 
     // Allow socket descriptor to be reuseable  
     r = setsockopt(sockfd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
@@ -261,14 +265,7 @@ int main(int argc, char **argv)
                         }
                         break;
                     }
-
-                    /*
-                    // TODO: create connection object
-                    Connection *connection = g_new0(Connection, 1);
                     
-                    // Create connection object and push on to queue
-                    add_client(connection, &client, new_sd);
-                    */
                     printf("New connection from %s:%d on socket %d\n", 
                         inet_ntoa(client.sin_addr), 
                         ntohs(client.sin_port), 
@@ -278,6 +275,8 @@ int main(int argc, char **argv)
                     // Add the new incoming connection to the pollfd structure.
                     fds[nfds].fd = new_sd;
                     fds[nfds].events = POLLIN;
+                    // Add connection to hash table with timer
+                    g_hash_table_insert(connections, &fds[nfds].fd, g_timer_new());
                     nfds++;
                     // Loop back up and accept another incoming connection
 
@@ -297,6 +296,7 @@ int main(int argc, char **argv)
                 if (close_conn) {
                     // TODO: clean up connection
                     close(fds[i].fd);
+                    g_hash_table_remove(connections, &fds[i].fd);
                     fds[i].fd = -1;
                     compress_array = TRUE;
                 }
@@ -308,17 +308,10 @@ int main(int argc, char **argv)
         // If the compress_array flag was turned on, we need to squeeze together the array and decrement 
         // the number of file descriptors. We do not need to move back the events and revents fields 
         // because the events will always be POLLIN in this case, and revents is output.
-        if (compress_array) {
-            compress_array = FALSE;
-            for (i = 0; i < nfds; i++) {
-                if (fds[i].fd == -1) {
-                    for(j = i; j < nfds; j++) {
-                        fds[j].fd = fds[j+1].fd;
-                    }
-                    nfds--;
-                }
-            }
-        }
+        array_compression(compress_array);
+
+        g_hash_table_foreach(connections, (GHFunc)handle_timeout, NULL);
+
     }   // End of server running
 
     // Clean up all of the sockets that are open
@@ -368,6 +361,9 @@ void add_client(Connection *connection, struct sockaddr_in *client, int connfd) 
 
 void serve_next_client(int connfd) {
 
+    // Reset the timer of this client
+    g_hash_table_replace (connections, &connfd, g_timer_new());
+
     socklen_t addrlen = (socklen_t) sizeof(client);
     getpeername(connfd, (struct sockaddr*) &client, &addrlen);
 
@@ -406,7 +402,6 @@ void serve_next_client(int connfd) {
 
         g_string_append_len(message, buffer, n);
     } while(n >= BUFFER_SIZE);
-
     
     printf("Length of message: %zd\n", message->len);
     
@@ -433,17 +428,39 @@ void serve_next_client(int connfd) {
     // Close connection if connection is not keep alive
     if (request.connection->len > 0 && g_ascii_strcasecmp(request.connection->str, "keep-alive") != 0) {
         close_conn = TRUE;
-        //close_connection(connection);
     }
 
     reset_request(&request);
 }
 
-void handle_timeout(Connection *connection) {
-    gdouble time_elapsed = g_timer_elapsed(connection->timer, NULL);
+void handle_timeout(int connfd, GTimer *timer) {
+    gdouble time_elapsed = g_timer_elapsed(timer, NULL);
     //printf("Checking timeout! Elapsed: %f\n", time_elapsed);
     if (time_elapsed >= TIMEOUT) {
-        close_connection(connection);
+        printf("\tConnection on socket %d timed out!\n", connfd);
+        for (int z = 0; z < nfds; z++) {
+            if (fds[z].fd == connfd) {
+                close(fds[z].fd);
+                g_hash_table_remove(connections, &fds[z].fd);
+                fds[z].fd = -1;
+                array_compression(TRUE);
+                break;
+            }
+        }
+    }
+}
+
+void array_compression(bool compress_array) {
+    if (compress_array) {
+        compress_array = FALSE;
+        for (i = 0; i < nfds; i++) {
+            if (fds[i].fd == -1) {
+                for(j = i; j < nfds; j++) {
+                    fds[j].fd = fds[j+1].fd;
+                }
+                nfds--;
+            }
+        }
     }
 }
 
