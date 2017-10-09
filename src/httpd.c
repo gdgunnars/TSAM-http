@@ -213,16 +213,16 @@ int main(int argc, char **argv)
         printf("Current Size of Queue: %d\n", g_queue_get_length(queue));
 
         printf("Waiting on poll()...\n");
-        r = poll(fds, nfds, TIMEOUT*1000);
+        r = poll(fds, nfds, 1000*60);
         // Check if poll() failed
         if (r < 0) {
-            perror("  poll() failed");
+            perror("  poll() failed. Stopping server.");
             break;
         }
         // Check if poll() timed out
         if (r == 0) {
-            printf("  poll() timed out.  End program.\n");
-            break;
+            printf("  poll() timed out, retrying...\n");
+            continue;
         }
 
         // One or more descriptors are readable. Need to determine which ones they are. 
