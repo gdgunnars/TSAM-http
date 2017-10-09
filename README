@@ -1,4 +1,38 @@
-Update this.
+A simple TFTP server written in the programming language c.
 
-Installing Glib on ubuntu 16.04
-    $ sudo apt install libglib2.0-dev
+/***********************************************************\
+|           Guðjón Steinar Sverrisson (gudjonss12@ru.is)    |
+|           Gunnar Davíð Gunnarsson (gunnarg15@ru.is)       |
+|           Hlynur Stefánsson (hlynurs15@ru.is)             |
+\***********************************************************/
+
+The Request:
+    For the request we have defined a struct called Request. 
+    It consists of a lot of variables related to the request that we fill
+    in the functions fill_request() and parse_header().
+
+    Before doing so we always call init_request to ensure that all the variables have been reset 
+    before constructing the new request. At the end we call reset_request().
+
+    If the request method is post we generate the body for it in the function generate_html()
+
+
+The Connection:
+    We store each connection in a hash table. The key is the connfd for the connection and the value
+    is the connection with a timer that we use to check for timeout.
+
+
+Keep-Alive:
+    Work in progress.
+
+Parallel connections:
+    We used this beautiful tutorial from:
+        https://www.ibm.com/support/knowledgecenter/en/ssw_i5_54/rzab6/poll.htm
+    to help us with implementing parallelism. Thank you ibm <3
+
+
+
+
+
+
+ 
