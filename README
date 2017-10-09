@@ -19,11 +19,12 @@ The Request:
 
 The Connection:
     We store each connection in a hash table. The key is the connfd for the connection and the value
-    is the connection with a timer that we use to check for timeout.
+    is the connection's timer that we use to check for timeout.
 
-
-Keep-Alive:
-    Work in progress.
+    Keep-Alive:
+        If that timer exceeds 30 seconds, we close the connection.
+        If a connection sends a new request while still in our hastable, the timer is reset.
+    
 
 Parallel connections:
     We used this beautiful tutorial from:
