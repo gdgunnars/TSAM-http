@@ -44,6 +44,13 @@
 #include <regex.h>
 #include <arpa/inet.h>
 
+typedef struct {
+    int connfd;
+    GTimer *timer;
+    struct sockaddr_in client;
+    int request_count;
+} Connection;
+
 /* ----- GLOBAL VARIABLES ----- */
 const ssize_t BUFFER_SIZE = 1024;
 const int TIMEOUT = 30;
@@ -53,6 +60,7 @@ int sockfd;
 GQueue *queue;
 int r;
 struct sockaddr_in server, client;
+Connection *current_connection = NULL;
 
 typedef struct {
 	GString *method;
@@ -70,13 +78,6 @@ typedef struct {
     GString *msg_body;
     GString *status_code;
 } Request;
-
-typedef struct {
-    int connfd;
-    GTimer *timer;
-    struct sockaddr_in client;
-    int request_count;
-} Connection;
 
 void handle_timeout(Connection *connection);
 void add_client(Connection *connection, struct sockaddr_in *client, int connfd);
@@ -163,8 +164,10 @@ int main(int argc, char **argv)
 	
     queue = g_queue_new();
 
-    while (1337) {
+    
 
+    while (1337) {
+        printf("\n###########################################################\n");
         printf("Current Size of Queue: %d\n", g_queue_get_length(queue));
 
         // We first have to accept a TCP connection, connfd is a fresh
@@ -181,8 +184,20 @@ int main(int argc, char **argv)
             inet_ntoa(connection->client.sin_addr), 
             ntohs(connection->client.sin_port), 
             connection->connfd);
-        
-        serve_next_client(g_queue_peek_head(queue));
+
+        // Check if there is anything in the queue
+        if (g_queue_get_length(queue) > 0) {
+            // Check if current connection is not set or head of queue is not current connection, then set it.
+            if (current_connection == NULL || current_connection != g_queue_peek_head(queue)) {
+                current_connection = g_queue_peek_head(queue);
+                printf("Switching to connection %s:%d on socket %d\n", 
+                    inet_ntoa(current_connection->client.sin_addr), 
+                    ntohs(current_connection->client.sin_port), 
+                    current_connection->connfd);
+            }
+        }
+
+        serve_next_client(current_connection);
 
         g_queue_foreach(queue, (GFunc) handle_timeout, NULL);
     }
@@ -205,6 +220,14 @@ void add_client(Connection *connection, struct sockaddr_in *client, int connfd) 
 }
 
 void serve_next_client(Connection *connection) {
+
+    printf("\n---------------------------------\n");
+    printf("Now serving %s:%d on socket %d\n", 
+        inet_ntoa(connection->client.sin_addr), 
+        ntohs(connection->client.sin_port), 
+        connection->connfd);
+
+
     GString *message = g_string_sized_new(BUFFER_SIZE);
     char buffer[BUFFER_SIZE];
     g_string_truncate (message, 0); // empty provided GString variable
@@ -219,7 +242,8 @@ void serve_next_client(Connection *connection) {
             exit(EXIT_FAILURE);
         }
         if (n == 0) {
-            break;
+            close_connection(connection);
+            return;
         }
         g_string_append_len(message, buffer, n);
     } while(n >= BUFFER_SIZE);
@@ -255,9 +279,8 @@ void serve_next_client(Connection *connection) {
 
 void handle_timeout(Connection *connection) {
     gdouble time_elapsed = g_timer_elapsed(connection->timer, NULL);
-    printf("Checking timeout! Elapsed: %p %f\n", (void*)&connection, time_elapsed);
+    //printf("Checking timeout! Elapsed: %f\n", time_elapsed);
     if (time_elapsed >= TIMEOUT) {
-        printf("TRYING TO REMOVE CONNECTION!\n");
         close_connection(connection);
     }
 }
@@ -286,7 +309,8 @@ void close_connection(Connection *connection) {
     // Remove connection from the queue
     g_queue_remove(queue, connection);
 
-    //g_free(connection);
+    current_connection = NULL;
+    g_free(connection);
 }
 
 char *get_status_code(char *status_code) {
@@ -427,15 +451,11 @@ bool fill_request(GString *message, Request *request)
     g_string_truncate(request->msg_body, 0);
     request->msg_body = g_string_new(header_and_body[1]);
     
-    printf("before firstline split\n");
     // Split the message on a newline to simplify extracting headers
     gchar **first_line_and_the_rest = g_strsplit(header_and_body[0], "\r\n", 2);
-    printf("after firstline split\n");
     
-    printf("before header1 split\n");
     // header_1[0] = method, [1] = path,  [2] = version
     gchar **header_1 = g_strsplit(first_line_and_the_rest[0], " ", 3);
-    printf("after header1 split\n");
 
     if (g_ascii_strcasecmp(header_1[0], "GET") == 0) {
         request->method = g_string_new("GET");
@@ -455,10 +475,8 @@ bool fill_request(GString *message, Request *request)
     
     //check if we have a query in our path. 
     if(str_contains_query(header_1[1])) {
-        printf("before path_query split\n");
         // Since we have a query, we split the string on "?".
         gchar **path_and_query = g_strsplit(header_1[1], "?", 2);
-        printf("after path_query split\n");
 
         // Set the request values correctly.
         request->path = g_string_new(path_and_query[0]);
@@ -481,10 +499,8 @@ bool fill_request(GString *message, Request *request)
         request->connection = g_string_new("Keep-Alive");
     }
     
-    printf("before lines split\n");
     // Split the header into separate lines and parse each line one at a time.
     gchar **lines = g_strsplit(first_line_and_the_rest[1], "\r\n", -1);
-    printf("after lines split\n");
 
     for (guint i = 0; i < g_strv_length(lines); i++) {
         parse_header(lines[i], request);
