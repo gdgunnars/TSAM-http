@@ -31,7 +31,10 @@ Parallel connections:
         https://www.ibm.com/support/knowledgecenter/en/ssw_i5_54/rzab6/poll.htm
     to help us with implementing parallelism. Thank you ibm <3
 
-
+Fairness:
+    We poll for waiting connections, and reply to everyone that has been waiting for less than 30 seconds with an active request.
+     A connection that has been idle for 30 seconds gets removed from our list of connections.
+    
 
 
 
